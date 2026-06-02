@@ -231,6 +231,7 @@ function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const manualStopRef = useRef(false);
   const cooldownRef = useRef<Record<string, number>>({});
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const selectedLine = useMemo(
     () => lines.find((line) => line.id === selectedLineId) ?? lines[0],
@@ -284,7 +285,10 @@ function App() {
 
   useEffect(() => {
     return () => {
+      currentAudioRef.current?.pause();
       recognitionRef.current?.abort();
+      blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
     };
   }, []);
 
@@ -312,6 +316,7 @@ function App() {
     const next = lines.filter((line) => line.id !== selectedLine.id);
     setLines(next);
     setSelectedLineId(next[0]?.id ?? "");
+    delete cooldownRef.current[selectedLine.id];
   };
 
   const clearAll = () => {
@@ -323,13 +328,31 @@ function App() {
     setStatus("Roteiro reiniciado com a fala padrão da risada.");
   };
 
+  const blobUrlsRef = useRef<string[]>([]);
+
+  const revokeBlobUrl = (url: string) => {
+    URL.revokeObjectURL(url);
+    blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== url);
+  };
+
   const playEffect = (line: ScriptLine) => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+
     if (line.audioBlob) {
       const url = URL.createObjectURL(line.audioBlob);
+      blobUrlsRef.current.push(url);
       const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
+      currentAudioRef.current = audio;
+      audio.onended = () => {
+        revokeBlobUrl(url);
+        currentAudioRef.current = null;
+      };
       audio.onerror = () => {
-        URL.revokeObjectURL(url);
+        revokeBlobUrl(url);
+        currentAudioRef.current = null;
         setError("Não consegui tocar esse arquivo de áudio. Tente outro arquivo de efeito sonoro.");
       };
       audio.play().catch(() => setError("O navegador bloqueou o áudio. Clique em testar efeito ou ligue o microfone novamente."));
@@ -348,8 +371,12 @@ function App() {
   const checkTranscript = (spoken: string) => {
     const candidates = lines
       .filter((line) => line.text.trim())
-      .map((line) => ({ line, score: similarityPercent(spoken, line.text) }))
-      .sort((a, b) => b.score - a.score);
+      .map((line) => ({
+        line,
+        score: similarityPercent(spoken, line.text),
+        wordScore: wordOverlap(spoken, line.text),
+      }))
+      .sort((a, b) => b.score - a.score || b.wordScore - a.wordScore);
 
     const best = candidates[0];
     if (!best || best.score < threshold) return;
@@ -428,10 +455,14 @@ function App() {
     setStatus("Microfone desligado.");
   };
 
-  const handleAudioUpload = (file?: File) => {
+  const handleFileUpload = (file?: File) => {
     if (!file || !selectedLine) return;
-    updateSelectedLine({ audioBlob: file, audioName: file.name, effectName: selectedLine.effectName || file.name });
-    setStatus(`Áudio “${file.name}” anexado à fala selecionada.`);
+    updateSelectedLine({
+      audioBlob: file,
+      audioName: file.name,
+      effectName: selectedLine.effectName || file.name.replace(/\.[^/.]+$/, ""),
+    });
+    setStatus(`Arquivo "${file.name}" anexado à fala selecionada.`);
   };
 
   const exportBackup = () => {
@@ -533,8 +564,8 @@ function App() {
                 </div>
 
                 <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Arquivo de áudio do efeito</label>
-                  <input type="file" accept="audio/*" onChange={(event) => handleAudioUpload(event.target.files?.[0])} className="mt-3 w-full rounded-2xl border border-dashed border-zinc-700 bg-black px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-400 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-black" />
+                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Arquivo de som do efeito</label>
+                  <input type="file" accept="audio/*,video/*" onChange={(event) => handleFileUpload(event.target.files?.[0])} className="mt-3 w-full rounded-2xl border border-dashed border-zinc-700 bg-black px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-400 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-black" />
                   <p className="mt-2 text-xs text-zinc-500">{selectedLine?.audioName ?? "Sem arquivo: o site usa risada sintética ou beep como reserva."}</p>
                 </div>
               </div>

@@ -33,7 +33,6 @@
             isListening: false,
             transcript: "",
             status: "Iniciando...",
-            activeMediaUrl: null
         };
 
         const dbRequest = indexedDB.open(DB_NAME, 1);
@@ -125,19 +124,9 @@
 
             if (line.media) {
                 const url = URL.createObjectURL(line.media);
-                if (line.mediaType === "video") {
-                    state.activeMediaUrl = url;
-                    render();
-                    setTimeout(() => {
-                        const v = document.getElementById('player-video');
-                        v.play();
-                        v.onended = () => { state.activeMediaUrl = null; URL.revokeObjectURL(url); render(); };
-                    }, 100);
-                } else {
-                    const a = new Audio(url);
-                    a.play();
-                    a.onended = () => URL.revokeObjectURL(url);
-                }
+                const a = new Audio(url);
+                a.play();
+                a.onended = () => URL.revokeObjectURL(url);
             } else {
                 // Efeito sintético se não tiver arquivo
                 if (line.text.includes("mudem de ideia") || line.effect.toLowerCase().includes("risada")) {
@@ -163,13 +152,6 @@
             const selected = state.lines.find(l => l.id === state.selectedId) || state.lines[0];
 
             root.innerHTML = `
-                ${state.activeMediaUrl ? `
-                    <div class="fixed inset-0 z-[100] bg-black flex items-center justify-center">
-                        <video id="player-video" src="${state.activeMediaUrl}" class="max-w-full max-h-full"></video>
-                        <button onclick="state.activeMediaUrl=null;render()" class="absolute top-8 right-8 text-white text-5xl font-bold">✕</button>
-                    </div>
-                ` : ''}
-
                 <aside class="w-80 border-r border-slate-800 bg-slate-900/50 flex flex-col shadow-2xl">
                     <div class="p-6 border-b border-slate-800">
                         <h1 class="text-xl font-black tracking-tight">Teleprompter</h1>
@@ -219,7 +201,7 @@
                                 <input type="text" value="${selected.effect}" oninput="updateEffect(this.value)" class="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500">
                             </div>
                             <div class="space-y-2">
-                                <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Mídia (Vídeo ou Áudio)</label>
+                                <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Som (áudio ou vídeo)</label>
                                 <input type="file" id="file-up" accept="video/*,audio/*" onchange="handleFile(this.files[0])" class="hidden">
                                 <label htmlFor="file-up" onclick="document.getElementById('file-up').click()" class="flex items-center justify-center w-full bg-slate-800 border border-slate-700 p-4 rounded-xl text-xs font-black cursor-pointer hover:bg-slate-700 transition-all">
                                     ${selected.mediaName || 'SUBIR ARQUIVO'}
