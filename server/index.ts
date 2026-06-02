@@ -1,3 +1,4 @@
+// Importação dos módulos: Express, HTTP, WebSocket e constantes compartilhadas
 import express from "express";
 import { createServer } from "http";
 import path from "path";
@@ -8,15 +9,17 @@ import { WS_EVENTS, ADMIN_PASSWORD, type WsMessage } from "../shared/const.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Informações de cada cliente conectado via WebSocket
 type ClientInfo = {
   ws: WebSocket;
   clientId: string;
   role: "admin" | "user";
 };
 
-let tokenHolderId: string | null = null;
-const clients = new Map<string, ClientInfo>();
+let tokenHolderId: string | null = null; // ID do cliente que detém o token de áudio
+const clients = new Map<string, ClientInfo>(); // Todos os clientes conectados
 
+// Envia uma mensagem para todos os clientes conectados (exceto quem excluir)
 function broadcast(msg: WsMessage, excludeId?: string) {
   const raw = JSON.stringify(msg);
   for (const [id, info] of clients) {
@@ -27,12 +30,14 @@ function broadcast(msg: WsMessage, excludeId?: string) {
   }
 }
 
+// Envia mensagem para um WebSocket específico
 function sendTo(ws: WebSocket, msg: WsMessage) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
 }
 
+// Kill Switch: libera o token e avisa todos os clientes para pararem toda a mídia
 function stopAllMediaAndKillToken() {
   tokenHolderId = null;
   broadcast({ type: WS_EVENTS.KILL_AUDIO_BROADCAST as typeof WS_EVENTS.KILL_AUDIO_BROADCAST });
@@ -44,6 +49,7 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Caminho dos arquivos estáticos (HTML/JS/CSS buildados)
   const staticPath =
     process.env.NODE_ENV === "production"
       ? path.resolve(__dirname, "public")
@@ -51,6 +57,7 @@ async function startServer() {
 
   app.use(express.static(staticPath));
 
+  // Servidor WebSocket na rota /ws para comunicação em tempo real
   const wss = new WebSocketServer({ server, path: "/ws" });
 
   wss.on("connection", (ws: WebSocket) => {
@@ -59,8 +66,10 @@ async function startServer() {
 
     clients.set(clientId, { ws, clientId, role });
 
+    // Informa o novo cliente sobre o estado atual do token
     sendTo(ws, { type: WS_EVENTS.TOKEN_HOLDER as typeof WS_EVENTS.TOKEN_HOLDER, holderId: tokenHolderId ?? undefined, clientId });
 
+    // Processa mensagens recebidas do cliente
     ws.on("message", (raw) => {
       let msg: WsMessage;
       try {
@@ -71,6 +80,7 @@ async function startServer() {
       }
 
       switch (msg.type) {
+        // Solicitação de token de áudio (apenas admin)
         case WS_EVENTS.TOKEN_REQUEST: {
           if (msg.role !== "admin") {
             sendTo(ws, { type: WS_EVENTS.UNAUTHORIZED as typeof WS_EVENTS.UNAUTHORIZED, message: "Only admins can acquire the token" });
@@ -88,6 +98,7 @@ async function startServer() {
           break;
         }
 
+        // Liberação do token de áudio
         case WS_EVENTS.TOKEN_RELEASE: {
           if (tokenHolderId === clientId) {
             tokenHolderId = null;
@@ -96,11 +107,8 @@ async function startServer() {
           break;
         }
 
+        // Kill Switch público: qualquer cliente pode disparar
         case WS_EVENTS.KILL_AUDIO: {
-          if (msg.role !== "admin") {
-            sendTo(ws, { type: WS_EVENTS.UNAUTHORIZED as typeof WS_EVENTS.UNAUTHORIZED, message: "Only admins can trigger kill switch" });
-            return;
-          }
           stopAllMediaAndKillToken();
           break;
         }
@@ -110,6 +118,7 @@ async function startServer() {
       }
     });
 
+    // Ao desconectar: limpa os dados do cliente e libera o token se era dele
     ws.on("close", () => {
       clients.delete(clientId);
       if (tokenHolderId === clientId) {
@@ -127,6 +136,7 @@ async function startServer() {
     });
   });
 
+  // Endpoint REST para login de administrador
   app.post("/api/admin/login", (req, res) => {
     const { password } = req.body ?? {};
     if (password === ADMIN_PASSWORD) {
@@ -136,6 +146,7 @@ async function startServer() {
     }
   });
 
+  // Fallback: serve o index.html para qualquer rota não reconhecida (SPA)
   app.get("*", (_req, res) => {
     res.sendFile(path.join(staticPath, "index.html"));
   });
