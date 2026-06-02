@@ -1,6 +1,8 @@
+// Imports do React e dos tipos/constantes compartilhadas
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WS_EVENTS, getWsUrl, type WsMessage } from "@shared/const";
 
+// Tipo que representa uma fala do roteiro
 type ScriptLine = {
   id: string;
   text: string;
@@ -11,12 +13,14 @@ type ScriptLine = {
   updatedAt: number;
 };
 
+// Tipo do estado persistido no IndexedDB
 type PersistedState = {
   version: 1;
   threshold: number;
   lines: ScriptLine[];
 };
 
+// Interface que descreve a API de reconhecimento de fala do navegador
 type SpeechRecognitionLike = {
   lang: string;
   continuous: boolean;
@@ -31,6 +35,7 @@ type SpeechRecognitionLike = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
+// Declaração global para a API de reconhecimento de voz (Chrome/Edge)
 declare global {
   interface Window {
     SpeechRecognition?: SpeechRecognitionConstructor;
@@ -38,12 +43,16 @@ declare global {
   }
 }
 
+// Configuração do banco IndexedDB para salvar o roteiro no navegador
 const DB_NAME = "teatro-teleprompter-db";
 const DB_VERSION = 1;
 const STORE_NAME = "app";
 const STATE_KEY = "state";
+
+// Frase padrão que dispara a risada sintética automática
 const DEFAULT_TRIGGER = "E ande logo antes que mudem de ideia!";
 
+// Gera um ID único para cada fala (UUID ou fallback)
 const makeId = () => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -53,6 +62,7 @@ const makeId = () => {
 
 const now = () => Date.now();
 
+// Cria a lista inicial padrão com a fala da risada
 const defaultLines = (): ScriptLine[] => [
   {
     id: makeId(),
@@ -64,6 +74,7 @@ const defaultLines = (): ScriptLine[] => [
   },
 ];
 
+// Abre conexão com o banco IndexedDB (cria o store se não existir)
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -80,6 +91,7 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
+// Carrega o estado salvo (linhas + threshold) do IndexedDB
 async function loadState(): Promise<PersistedState | null> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -93,6 +105,7 @@ async function loadState(): Promise<PersistedState | null> {
   });
 }
 
+// Salva o estado atual (linhas + threshold) no IndexedDB
 async function saveState(state: PersistedState): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -108,6 +121,7 @@ async function saveState(state: PersistedState): Promise<void> {
   });
 }
 
+// Normaliza texto: remove acentos, converte pra minúsculas, remove pontuação
 const normalizeText = (value: string) =>
   value
     .normalize("NFD")
@@ -117,6 +131,7 @@ const normalizeText = (value: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Gera bigramas (pares de caracteres consecutivos) para comparação de similaridade
 const bigrams = (value: string) => {
   const compact = normalizeText(value).replace(/\s+/g, "");
   if (compact.length < 2) return compact ? [compact] : [];
@@ -127,6 +142,7 @@ const bigrams = (value: string) => {
   return result;
 };
 
+// Coeficiente de Dice: mede similaridade entre dois textos por bigramas
 function diceSimilarity(left: string, right: string) {
   const a = bigrams(left);
   const b = bigrams(right);
@@ -147,6 +163,7 @@ function diceSimilarity(left: string, right: string) {
   return (2 * intersection) / (a.length + b.length);
 }
 
+// Mede sobreposição de palavras entre dois textos
 function wordOverlap(left: string, right: string) {
   const a = new Set(normalizeText(left).split(" ").filter(Boolean));
   const b = new Set(normalizeText(right).split(" ").filter(Boolean));
@@ -160,6 +177,7 @@ function wordOverlap(left: string, right: string) {
   return intersection / Math.max(a.size, b.size);
 }
 
+// Calcula percentual de similaridade combinando inclusão, Dice e sobreposição de palavras
 function similarityPercent(spoken: string, target: string) {
   const spokenNormalized = normalizeText(spoken);
   const targetNormalized = normalizeText(target);
@@ -173,15 +191,18 @@ function similarityPercent(spoken: string, target: string) {
   return Math.round(Math.max(containsScore, diceScore, wordScore));
 }
 
+// Toca uma risada sintética usando Web Audio API (osciladores sawtooth)
+// Retorna o AudioContext para poder pará-lo externamente via stopAllAudio()
 function playSyntheticLaugh() {
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) return;
+  if (!AudioContextClass) return null;
 
   const audioContext = new AudioContextClass();
   const master = audioContext.createGain();
   master.gain.value = 0.14;
   master.connect(audioContext.destination);
 
+  // 5 sílabas de risada com frequências crescentes
   const syllables = [0, 0.18, 0.36, 0.56, 0.76];
   syllables.forEach((offset, index) => {
     const oscillator = audioContext.createOscillator();
@@ -198,12 +219,18 @@ function playSyntheticLaugh() {
     oscillator.stop(audioContext.currentTime + offset + 0.18);
   });
 
-  window.setTimeout(() => audioContext.close(), 1400);
+  // Fecha o AudioContext após a risada terminar
+  window.setTimeout(() => {
+    audioContext.close();
+  }, 1400);
+
+  return audioContext;
 }
 
+// Toca um beep simples (triângulo 740Hz) como fallback quando não há áudio personalizado
 function playFallbackBeep() {
   const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) return;
+  if (!AudioContextClass) return null;
 
   const audioContext = new AudioContextClass();
   const oscillator = audioContext.createOscillator();
@@ -215,41 +242,81 @@ function playFallbackBeep() {
   gain.connect(audioContext.destination);
   oscillator.start();
   oscillator.stop(audioContext.currentTime + 0.35);
-  window.setTimeout(() => audioContext.close(), 600);
+  window.setTimeout(() => {
+    audioContext.close();
+  }, 600);
+
+  return audioContext;
 }
 
 function App() {
+  // === Estados do roteiro e reconhecimento de voz ===
   const [lines, setLines] = useState<ScriptLine[]>(defaultLines);
   const [selectedLineId, setSelectedLineId] = useState<string>("");
-  const [threshold, setThreshold] = useState(60);
-  const [transcript, setTranscript] = useState("");
+  const [threshold, setThreshold] = useState(60); // % mínima de similaridade para disparar
+  const [transcript, setTranscript] = useState(""); // última frase reconhecida pelo microfone
   const [status, setStatus] = useState("Carregando roteiro salvo...");
   const [isLoaded, setIsLoaded] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [lastMatch, setLastMatch] = useState<{ line: ScriptLine; score: number } | null>(null);
   const [error, setError] = useState("");
 
+  // === Estados de admin e WebSocket ===
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
-  const [isPttHolding, setIsPttHolding] = useState(false);
-  const [isTokenBusy, setIsTokenBusy] = useState(false);
-  const [wsStatus, setWsStatus] = useState("desconectado");
+  const [isPttHolding, setIsPttHolding] = useState(false); // se o PTT está ativo
+  const [isTokenBusy, setIsTokenBusy] = useState(false); // se outro cliente tem o token
+  const [wsStatus, setWsStatus] = useState("desconectado"); // status da conexão WebSocket
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const manualStopRef = useRef(false);
-  const cooldownRef = useRef<Record<string, number>>({});
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const pttStreamRef = useRef<MediaStream | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const wsReconnectTimerRef = useRef<number | null>(null);
-  const wsReconnectDelayRef = useRef(1000);
+  // === Refs para controle de áudio e conexão ===
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null); // instância do SpeechRecognition
+  const manualStopRef = useRef(false); // se o usuário parou manualmente o microfone
+  const cooldownRef = useRef<Record<string, number>>({}); // controle de cooldown entre disparos
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null); // áudio em reprodução (arquivo)
+  const audioContextRef = useRef<AudioContext | null>(null); // contexto de áudio (sons sintéticos)
+  const pttStreamRef = useRef<MediaStream | null>(null); // stream do microfone para PTT
+  const wsRef = useRef<WebSocket | null>(null); // conexão WebSocket
+  const wsReconnectTimerRef = useRef<number | null>(null); // timer para reconexão
+  const wsReconnectDelayRef = useRef(1000); // delay inicial de reconexão (backoff exponencial)
 
+  // Para todo áudio em reprodução: arquivo, sintético, mídia no DOM e PTT
+  const stopAllAudio = () => {
+    // Para áudio baseado em arquivo (HTMLAudioElement)
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    // Para som sintético (Web Audio API)
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    // Para todos os elementos <audio> e <video> do DOM
+    const allMedia = document.querySelectorAll("audio, video");
+    allMedia.forEach((el) => {
+      const media = el as HTMLMediaElement;
+      media.pause();
+      media.srcObject = null;
+      media.src = "";
+      media.load();
+    });
+    // Para o PTT (microfone)
+    if (pttStreamRef.current) {
+      pttStreamRef.current.getTracks().forEach((t) => t.stop());
+      pttStreamRef.current = null;
+    }
+    setIsPttHolding(false);
+    setIsTokenBusy(false);
+  };
+
+  // Linha selecionada atualmente (para edição)
   const selectedLine = useMemo(
     () => lines.find((line) => line.id === selectedLineId) ?? lines[0],
     [lines, selectedLineId],
   );
 
+  // Ao montar: carrega o roteiro salvo do IndexedDB
   useEffect(() => {
     let cancelled = false;
 
@@ -283,6 +350,7 @@ function App() {
     };
   }, []);
 
+  // Auto-save: salva no IndexedDB após 350ms de inatividade (debounce)
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -295,6 +363,7 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [isLoaded, lines, threshold]);
 
+  // Conexão WebSocket com reconexão automática (backoff exponencial)
   useEffect(() => {
     let reconnectAttempts = 0;
 
@@ -311,6 +380,7 @@ function App() {
         wsReconnectDelayRef.current = 1000;
       };
 
+      // Processa mensagens recebidas do servidor via WebSocket
       ws.onmessage = (event) => {
         let data: WsMessage;
         try {
@@ -320,46 +390,32 @@ function App() {
         }
 
         switch (data.type) {
-          case WS_EVENTS.TOKEN_ACQUIRED:
+          case WS_EVENTS.TOKEN_ACQUIRED: // Token de áudio concedido a este cliente
             setIsTokenBusy(true);
             setIsPttHolding(true);
             break;
-          case WS_EVENTS.TOKEN_BUSY:
+          case WS_EVENTS.TOKEN_BUSY: // Token ocupado por outro cliente
             setIsTokenBusy(true);
             setError(`Token ocupado por outro cliente.`);
             break;
-          case WS_EVENTS.TOKEN_RELEASED:
+          case WS_EVENTS.TOKEN_RELEASED: // Token liberado
             setIsTokenBusy(false);
             setIsPttHolding(false);
             break;
-          case WS_EVENTS.TOKEN_HOLDER:
+          case WS_EVENTS.TOKEN_HOLDER: // Status atual do token ao conectar
             setIsTokenBusy(data.holderId != null);
             break;
-          case WS_EVENTS.KILL_AUDIO_BROADCAST:
-            currentAudioRef.current?.pause();
-            currentAudioRef.current = null;
-            const allAudio = document.querySelectorAll("audio, video");
-            allAudio.forEach((el) => {
-              const media = el as HTMLMediaElement;
-              media.pause();
-              media.srcObject = null;
-              media.src = "";
-              media.load();
-            });
-            if (pttStreamRef.current) {
-              pttStreamRef.current.getTracks().forEach((t) => t.stop());
-              pttStreamRef.current = null;
-            }
-            setIsPttHolding(false);
-            setIsTokenBusy(false);
+          case WS_EVENTS.KILL_AUDIO_BROADCAST: // Kill Switch acionado por alguém
+            stopAllAudio();
             setStatus("Kill Switch acionado: toda a mídia foi parada.");
             break;
-          case WS_EVENTS.UNAUTHORIZED:
+          case WS_EVENTS.UNAUTHORIZED: // Acesso negado (admin)
             setError(`Acesso negado: ${data.message}`);
             break;
         }
       };
 
+      // Reconexão automática com backoff exponencial (1s, 2s, 4s, ... até 30s)
       ws.onclose = () => {
         setWsStatus("desconectado");
         setIsPttHolding(false);
@@ -386,6 +442,7 @@ function App() {
     };
   }, []);
 
+  // Cleanup ao desmontar: para áudio, microfone e libera URLs de blob
   useEffect(() => {
     return () => {
       currentAudioRef.current?.pause();
@@ -396,6 +453,9 @@ function App() {
     };
   }, []);
 
+  // === Funções do WebSocket / Token de Áudio (Mutex) ===
+
+  // Solicita o token de áudio ao servidor (apenas admin pode usar)
   const acquireToken = async () => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setError("Sem conexão com o servidor.");
@@ -405,6 +465,7 @@ function App() {
     return true;
   };
 
+  // Libera o token de áudio
   const releaseToken = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: WS_EVENTS.TOKEN_RELEASE }));
@@ -412,6 +473,7 @@ function App() {
     setIsPttHolding(false);
   };
 
+  // Inicia Push-to-Talk: adquire token e captura microfone
   const startPtt = async () => {
     if (!isAdmin) return;
     setError("");
@@ -431,6 +493,7 @@ function App() {
     }
   };
 
+  // Para o PTT: libera token e para o microfone
   const stopPtt = () => {
     if (pttStreamRef.current) {
       pttStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -439,11 +502,13 @@ function App() {
     releaseToken();
   };
 
+  // Kill Switch público: envia comando para parar todo áudio em todos os clientes
   const triggerKillSwitch = () => {
-    if (!isAdmin || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: WS_EVENTS.KILL_AUDIO, role: "admin" }));
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: WS_EVENTS.KILL_AUDIO }));
   };
 
+  // Login de administrador (para acessar o PTT)
   const handleAdminLogin = async () => {
     try {
       const res = await fetch("/api/admin/login", {
@@ -464,6 +529,9 @@ function App() {
     }
   };
 
+  // === CRUD de falas ===
+
+  // Atualiza parcialmente a fala selecionada
   const updateSelectedLine = (patch: Partial<ScriptLine>) => {
     if (!selectedLine) return;
     setLines((current) =>
@@ -471,6 +539,7 @@ function App() {
     );
   };
 
+  // Adiciona nova fala no início da lista
   const addLine = () => {
     const line: ScriptLine = {
       id: makeId(),
@@ -483,6 +552,7 @@ function App() {
     setSelectedLineId(line.id);
   };
 
+  // Apaga a fala selecionada (mantém no mínimo 1)
   const deleteSelectedLine = () => {
     if (!selectedLine || lines.length === 1) return;
     const next = lines.filter((line) => line.id !== selectedLine.id);
@@ -491,6 +561,7 @@ function App() {
     delete cooldownRef.current[selectedLine.id];
   };
 
+  // Reinicia o roteiro com apenas a fala padrão da risada
   const clearAll = () => {
     const initial = defaultLines();
     setLines(initial);
@@ -500,18 +571,18 @@ function App() {
     setStatus("Roteiro reiniciado com a fala padrão da risada.");
   };
 
-  const blobUrlsRef = useRef<string[]>([]);
+  // === Reprodução de áudio ===
+
+  const blobUrlsRef = useRef<string[]>([]); // URLs de blob criadas para evitar vazamento
 
   const revokeBlobUrl = (url: string) => {
     URL.revokeObjectURL(url);
     blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== url);
   };
 
+  // Toca o efeito sonoro de uma fala, parando qualquer áudio anterior primeiro
   const playEffect = (line: ScriptLine) => {
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
+    stopAllAudio(); // Garante que só UM áudio toque por vez
 
     if (line.audioBlob) {
       const url = URL.createObjectURL(line.audioBlob);
@@ -531,15 +602,19 @@ function App() {
       return;
     }
 
+    // Sem arquivo: toca risada sintética ou beep de fallback
     const normalizedEffect = normalizeText(line.effectName);
     const normalizedText = normalizeText(line.text);
     if (normalizedEffect.includes("risada") || normalizedText === normalizeText(DEFAULT_TRIGGER)) {
-      playSyntheticLaugh();
+      const ctx = playSyntheticLaugh();
+      if (ctx) audioContextRef.current = ctx;
     } else {
-      playFallbackBeep();
+      const ctx = playFallbackBeep();
+      if (ctx) audioContextRef.current = ctx;
     }
   };
 
+  // Compara o que foi falado com as falas cadastradas e dispara o efeito se bater
   const checkTranscript = (spoken: string) => {
     const candidates = lines
       .filter((line) => line.text.trim())
@@ -551,8 +626,9 @@ function App() {
       .sort((a, b) => b.score - a.score || b.wordScore - a.wordScore);
 
     const best = candidates[0];
-    if (!best || best.score < threshold) return;
+    if (!best || best.score < threshold) return; // abaixo do limite
 
+    // Cooldown de 3.5s para evitar disparos repetidos
     const lastPlayed = cooldownRef.current[best.line.id] ?? 0;
     if (Date.now() - lastPlayed < 3500) return;
 
@@ -563,6 +639,9 @@ function App() {
     playEffect(best.line);
   };
 
+  // === Reconhecimento de voz ===
+
+  // Inicia a escuta contínua do microfone (Web Speech API)
   const startListening = () => {
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
@@ -577,6 +656,7 @@ function App() {
     recognition.continuous = true;
     recognition.interimResults = true;
 
+    // Processa o resultado do reconhecimento de fala
     recognition.onresult = (event: any) => {
       let finalText = "";
       let interimText = "";
@@ -598,6 +678,7 @@ function App() {
       setIsListening(false);
     };
 
+    // Reconecta automaticamente se o reconhecimento cair (a menos que parado manualmente)
     recognition.onend = () => {
       setIsListening(false);
       if (!manualStopRef.current) {
@@ -620,6 +701,7 @@ function App() {
     }
   };
 
+  // Para o reconhecimento de voz manualmente
   const stopListening = () => {
     manualStopRef.current = true;
     recognitionRef.current?.stop();
@@ -627,6 +709,9 @@ function App() {
     setStatus("Microfone desligado.");
   };
 
+  // === Upload e exportação ===
+
+  // Anexa um arquivo de áudio/vídeo à fala selecionada
   const handleFileUpload = (file?: File) => {
     if (!file || !selectedLine) return;
     updateSelectedLine({
@@ -637,6 +722,7 @@ function App() {
     setStatus(`Arquivo "${file.name}" anexado à fala selecionada.`);
   };
 
+  // Exporta o roteiro como JSON (sem os blobs de áudio)
   const exportBackup = () => {
     const payload = JSON.stringify(
       {
@@ -655,23 +741,29 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  // Similaridade da transcrição atual com a fala selecionada (para a barra de progresso)
   const bestPreview = transcript && selectedLine ? similarityPercent(transcript, selectedLine.text) : 0;
+
+  // === Renderização da Interface ===
 
   return (
     <main className="min-h-screen bg-[#070707] text-zinc-100">
       <section className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 border-zinc-800 lg:grid-cols-[420px_1fr] lg:border-x">
+        {/* Painel lateral esquerdo: lista de falas e controles */}
         <aside className="border-b border-zinc-800 bg-zinc-950/95 lg:border-b-0 lg:border-r">
           <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Falas do script</p>
               <h1 className="mt-1 text-xl font-semibold text-white">Teatro Teleprompter</h1>
             </div>
+            {/* Botão para adicionar nova fala */}
             <button onClick={addLine} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-100 transition hover:border-emerald-400 hover:text-emerald-300">
               + Nova fala
             </button>
           </header>
 
           <div className="space-y-3 p-4">
+            {/* Painel de reconhecimento de voz: ligar/desligar microfone e ajuste de sensibilidade */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -682,38 +774,50 @@ function App() {
                   {isListening ? "Parar" : "Ligar mic"}
                 </button>
               </div>
+              {/* Slider para ajustar o percentual mínimo de similaridade */}
               <label className="mt-4 block text-xs uppercase tracking-[0.2em] text-zinc-500">Similaridade: {threshold}%</label>
               <input className="mt-2 w-full accent-emerald-400" type="range" min="40" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
             </div>
 
+            {/* Painel público de parar áudio: STOP (local) e KILL (todos os clientes) */}
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-red-400 mb-3">Parar áudio</p>
+              <div className="flex gap-2">
+                <button onClick={stopAllAudio} className="flex-1 rounded-full border border-zinc-600 px-4 py-3 text-sm font-bold text-zinc-200 transition hover:bg-zinc-800 active:scale-95">
+                  STOP {/* Para áudio apenas neste navegador */}
+                </button>
+                <button onClick={triggerKillSwitch} className="flex-1 rounded-full border border-red-500/40 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95">
+                  KILL {/* Para áudio em TODOS os clientes conectados via WebSocket */}
+                </button>
+              </div>
+              <p className="mt-2 text-[10px] text-zinc-500">WS: {wsStatus} {isTokenBusy ? "| token ocupado" : ""}</p>
+            </div>
+
+            {/* Botão de login admin (oculto quando já logado) */}
             {!isAdmin && (
               <button onClick={() => setShowAdminLogin(true)} className="w-full rounded-2xl border border-zinc-700 bg-zinc-900/50 p-3 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200">
                 Admin: entrar
               </button>
             )}
 
+            {/* Painel admin: Push-to-Talk (visível apenas para admin) */}
             {isAdmin && (
               <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-amber-400 mb-3">Controle de áudio</p>
-                <div className="flex gap-2">
-                  <button
-                    onMouseDown={startPtt}
-                    onMouseUp={stopPtt}
-                    onMouseLeave={stopPtt}
-                    onTouchStart={startPtt}
-                    onTouchEnd={stopPtt}
-                    className={`flex-1 rounded-full px-4 py-3 text-sm font-bold transition active:scale-95 ${isPttHolding ? "bg-red-500 text-white shadow-lg shadow-red-500/30" : "bg-emerald-400 text-black hover:bg-emerald-300"}`}
-                  >
-                    {isPttHolding ? "FALANDO..." : "PTT"}
-                  </button>
-                  <button onClick={triggerKillSwitch} className="rounded-full border border-red-500/40 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95">
-                    KILL
-                  </button>
-                </div>
-                <p className="mt-2 text-[10px] text-zinc-500">WS: {wsStatus} {isTokenBusy ? "| token ocupado" : ""}</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-amber-400 mb-3">Admin: Push-to-Talk</p>
+                <button
+                  onMouseDown={startPtt}
+                  onMouseUp={stopPtt}
+                  onMouseLeave={stopPtt}
+                  onTouchStart={startPtt}
+                  onTouchEnd={stopPtt}
+                  className={`w-full rounded-full px-4 py-3 text-sm font-bold transition active:scale-95 ${isPttHolding ? "bg-red-500 text-white shadow-lg shadow-red-500/30" : "bg-emerald-400 text-black hover:bg-emerald-300"}`}
+                >
+                  {isPttHolding ? "FALANDO..." : "PTT"}
+                </button>
               </div>
             )}
 
+            {/* Modal de login administrador */}
             {showAdminLogin && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowAdminLogin(false)}>
                 <div className="rounded-3xl border border-zinc-700 bg-zinc-900 p-6 w-80 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -734,6 +838,7 @@ function App() {
               </div>
             )}
 
+            {/* Lista de falas cadastradas */}
             <div className="max-h-[calc(100vh-260px)] space-y-2 overflow-y-auto pr-1">
               {lines.map((line, index) => {
                 const active = line.id === selectedLine?.id;
@@ -754,6 +859,7 @@ function App() {
           </div>
         </aside>
 
+        {/* Painel direito: edição da fala selecionada */}
         <section className="bg-[#0b0b0b]">
           <header className="border-b border-zinc-800 px-6 py-4">
             <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Editar fala</p>
@@ -762,6 +868,7 @@ function App() {
 
           <div className="grid gap-6 p-6 xl:grid-cols-[1fr_340px]">
             <div className="space-y-6">
+              {/* Editor de texto da fala */}
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl shadow-black/40">
                 <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Texto da fala que será reconhecida</label>
                 <textarea
@@ -772,6 +879,7 @@ function App() {
                 />
               </div>
 
+              {/* Nome do efeito e upload de arquivo */}
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
                   <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Nome do efeito</label>
@@ -783,6 +891,7 @@ function App() {
                   />
                 </div>
 
+                {/* Upload de arquivo de áudio/vídeo para usar como efeito */}
                 <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
                   <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Arquivo de som do efeito</label>
                   <input type="file" accept="audio/*,video/*" onChange={(event) => handleFileUpload(event.target.files?.[0])} className="mt-3 w-full rounded-2xl border border-dashed border-zinc-700 bg-black px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-400 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-black" />
@@ -790,6 +899,7 @@ function App() {
                 </div>
               </div>
 
+              {/* Botões de ação: testar, exportar, apagar, reiniciar */}
               <div className="flex flex-wrap gap-3">
                 <button onClick={() => selectedLine && playEffect(selectedLine)} className="rounded-full bg-emerald-400 px-5 py-3 text-sm font-bold text-black transition hover:bg-emerald-300">Testar efeito</button>
                 <button onClick={exportBackup} className="rounded-full border border-zinc-700 px-5 py-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-500">Exportar roteiro</button>
@@ -798,13 +908,16 @@ function App() {
               </div>
             </div>
 
+            {/* Painéis laterais de status, transcrição e último gatilho */}
             <div className="space-y-4">
+              {/* Status e mensagens de erro */}
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
                 <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Status</p>
                 <p className="mt-3 text-sm leading-relaxed text-zinc-300">{status}</p>
                 {error && <p className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
               </div>
 
+              {/* Transcrição do que foi ouvido e barra de similaridade */}
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
                 <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Último ouvido</p>
                 <p className="mt-3 min-h-20 rounded-2xl border border-zinc-800 bg-black p-4 text-sm leading-relaxed text-zinc-300">{transcript || "Ligue o microfone e fale uma frase do roteiro."}</p>
@@ -814,6 +927,7 @@ function App() {
                 <p className="mt-2 text-xs text-zinc-500">Parecido com a fala selecionada: {bestPreview}%</p>
               </div>
 
+              {/* Último gatilho disparado com sucesso */}
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
                 <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Último gatilho</p>
                 {lastMatch ? (
@@ -827,8 +941,9 @@ function App() {
                 )}
               </div>
 
+              {/* Aviso sobre armazenamento no navegador */}
               <blockquote className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5 text-sm leading-relaxed text-amber-100">
-                GitHub Pages não tem servidor próprio. Por isso, o “storage” foi feito no navegador com IndexedDB: se fechar e abrir de novo no mesmo navegador, o roteiro e os áudios continuam salvos.
+                GitHub Pages não tem servidor próprio. Por isso, o &ldquo;storage&rdquo; foi feito no navegador com IndexedDB: se fechar e abrir de novo no mesmo navegador, o roteiro e os áudios continuam salvos.
               </blockquote>
             </div>
           </div>
