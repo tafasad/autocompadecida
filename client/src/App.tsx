@@ -231,6 +231,7 @@ function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const manualStopRef = useRef(false);
   const cooldownRef = useRef<Record<string, number>>({});
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const selectedLine = useMemo(
     () => lines.find((line) => line.id === selectedLineId) ?? lines[0],
@@ -284,6 +285,7 @@ function App() {
 
   useEffect(() => {
     return () => {
+      currentAudioRef.current?.pause();
       recognitionRef.current?.abort();
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current = [];
@@ -334,13 +336,23 @@ function App() {
   };
 
   const playEffect = (line: ScriptLine) => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+
     if (line.audioBlob) {
       const url = URL.createObjectURL(line.audioBlob);
       blobUrlsRef.current.push(url);
       const audio = new Audio(url);
-      audio.onended = () => revokeBlobUrl(url);
+      currentAudioRef.current = audio;
+      audio.onended = () => {
+        revokeBlobUrl(url);
+        currentAudioRef.current = null;
+      };
       audio.onerror = () => {
         revokeBlobUrl(url);
+        currentAudioRef.current = null;
         setError("Não consegui tocar esse arquivo de áudio. Tente outro arquivo de efeito sonoro.");
       };
       audio.play().catch(() => setError("O navegador bloqueou o áudio. Clique em testar efeito ou ligue o microfone novamente."));
@@ -359,8 +371,12 @@ function App() {
   const checkTranscript = (spoken: string) => {
     const candidates = lines
       .filter((line) => line.text.trim())
-      .map((line) => ({ line, score: similarityPercent(spoken, line.text) }))
-      .sort((a, b) => b.score - a.score);
+      .map((line) => ({
+        line,
+        score: similarityPercent(spoken, line.text),
+        wordScore: wordOverlap(spoken, line.text),
+      }))
+      .sort((a, b) => b.score - a.score || b.wordScore - a.wordScore);
 
     const best = candidates[0];
     if (!best || best.score < threshold) return;
