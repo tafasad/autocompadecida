@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { WS_EVENTS, getWsUrl, type WsMessage } from "@shared/const";
 
 type ScriptLine = {
   id: string;
@@ -228,10 +229,21 @@ function App() {
   const [lastMatch, setLastMatch] = useState<{ line: ScriptLine; score: number } | null>(null);
   const [error, setError] = useState("");
 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [isPttHolding, setIsPttHolding] = useState(false);
+  const [isTokenBusy, setIsTokenBusy] = useState(false);
+  const [wsStatus, setWsStatus] = useState("desconectado");
+
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const manualStopRef = useRef(false);
   const cooldownRef = useRef<Record<string, number>>({});
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const pttStreamRef = useRef<MediaStream | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsReconnectTimerRef = useRef<number | null>(null);
+  const wsReconnectDelayRef = useRef(1000);
 
   const selectedLine = useMemo(
     () => lines.find((line) => line.id === selectedLineId) ?? lines[0],
@@ -284,13 +296,173 @@ function App() {
   }, [isLoaded, lines, threshold]);
 
   useEffect(() => {
+    let reconnectAttempts = 0;
+
+    function connectWs() {
+      wsRef.current?.close();
+      const url = getWsUrl();
+      setWsStatus("conectando...");
+      const ws = new WebSocket(`${url}/ws`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setWsStatus("conectado");
+        reconnectAttempts = 0;
+        wsReconnectDelayRef.current = 1000;
+      };
+
+      ws.onmessage = (event) => {
+        let data: WsMessage;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+
+        switch (data.type) {
+          case WS_EVENTS.TOKEN_ACQUIRED:
+            setIsTokenBusy(true);
+            setIsPttHolding(true);
+            break;
+          case WS_EVENTS.TOKEN_BUSY:
+            setIsTokenBusy(true);
+            setError(`Token ocupado por outro cliente.`);
+            break;
+          case WS_EVENTS.TOKEN_RELEASED:
+            setIsTokenBusy(false);
+            setIsPttHolding(false);
+            break;
+          case WS_EVENTS.TOKEN_HOLDER:
+            setIsTokenBusy(data.holderId != null);
+            break;
+          case WS_EVENTS.KILL_AUDIO_BROADCAST:
+            currentAudioRef.current?.pause();
+            currentAudioRef.current = null;
+            const allAudio = document.querySelectorAll("audio, video");
+            allAudio.forEach((el) => {
+              const media = el as HTMLMediaElement;
+              media.pause();
+              media.srcObject = null;
+              media.src = "";
+              media.load();
+            });
+            if (pttStreamRef.current) {
+              pttStreamRef.current.getTracks().forEach((t) => t.stop());
+              pttStreamRef.current = null;
+            }
+            setIsPttHolding(false);
+            setIsTokenBusy(false);
+            setStatus("Kill Switch acionado: toda a mídia foi parada.");
+            break;
+          case WS_EVENTS.UNAUTHORIZED:
+            setError(`Acesso negado: ${data.message}`);
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        setWsStatus("desconectado");
+        setIsPttHolding(false);
+        setIsTokenBusy(false);
+        reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        wsReconnectDelayRef.current = delay;
+        wsReconnectTimerRef.current = window.setTimeout(connectWs, delay);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    connectWs();
+
+    return () => {
+      if (wsReconnectTimerRef.current) {
+        clearTimeout(wsReconnectTimerRef.current);
+      }
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       currentAudioRef.current?.pause();
       recognitionRef.current?.abort();
+      pttStreamRef.current?.getTracks().forEach((t) => t.stop());
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current = [];
     };
   }, []);
+
+  const acquireToken = async () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setError("Sem conexão com o servidor.");
+      return false;
+    }
+    wsRef.current.send(JSON.stringify({ type: WS_EVENTS.TOKEN_REQUEST, role: "admin" }));
+    return true;
+  };
+
+  const releaseToken = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: WS_EVENTS.TOKEN_RELEASE }));
+    }
+    setIsPttHolding(false);
+  };
+
+  const startPtt = async () => {
+    if (!isAdmin) return;
+    setError("");
+
+    const ok = await acquireToken();
+    if (!ok) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
+      });
+      pttStreamRef.current = stream;
+      setIsPttHolding(true);
+    } catch {
+      setError("Não foi possível acessar o microfone para PTT.");
+      releaseToken();
+    }
+  };
+
+  const stopPtt = () => {
+    if (pttStreamRef.current) {
+      pttStreamRef.current.getTracks().forEach((t) => t.stop());
+      pttStreamRef.current = null;
+    }
+    releaseToken();
+  };
+
+  const triggerKillSwitch = () => {
+    if (!isAdmin || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: WS_EVENTS.KILL_AUDIO, role: "admin" }));
+  };
+
+  const handleAdminLogin = async () => {
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: adminPassword }),
+      });
+      if (res.ok) {
+        setIsAdmin(true);
+        setShowAdminLogin(false);
+        setAdminPassword("");
+        setStatus("Autenticado como administrador.");
+      } else {
+        setError("Senha de administrador incorreta.");
+      }
+    } catch {
+      setError("Erro ao conectar com o servidor para autenticação.");
+    }
+  };
 
   const updateSelectedLine = (patch: Partial<ScriptLine>) => {
     if (!selectedLine) return;
@@ -513,6 +685,54 @@ function App() {
               <label className="mt-4 block text-xs uppercase tracking-[0.2em] text-zinc-500">Similaridade: {threshold}%</label>
               <input className="mt-2 w-full accent-emerald-400" type="range" min="40" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
             </div>
+
+            {!isAdmin && (
+              <button onClick={() => setShowAdminLogin(true)} className="w-full rounded-2xl border border-zinc-700 bg-zinc-900/50 p-3 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200">
+                Admin: entrar
+              </button>
+            )}
+
+            {isAdmin && (
+              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-amber-400 mb-3">Controle de áudio</p>
+                <div className="flex gap-2">
+                  <button
+                    onMouseDown={startPtt}
+                    onMouseUp={stopPtt}
+                    onMouseLeave={stopPtt}
+                    onTouchStart={startPtt}
+                    onTouchEnd={stopPtt}
+                    className={`flex-1 rounded-full px-4 py-3 text-sm font-bold transition active:scale-95 ${isPttHolding ? "bg-red-500 text-white shadow-lg shadow-red-500/30" : "bg-emerald-400 text-black hover:bg-emerald-300"}`}
+                  >
+                    {isPttHolding ? "FALANDO..." : "PTT"}
+                  </button>
+                  <button onClick={triggerKillSwitch} className="rounded-full border border-red-500/40 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95">
+                    KILL
+                  </button>
+                </div>
+                <p className="mt-2 text-[10px] text-zinc-500">WS: {wsStatus} {isTokenBusy ? "| token ocupado" : ""}</p>
+              </div>
+            )}
+
+            {showAdminLogin && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowAdminLogin(false)}>
+                <div className="rounded-3xl border border-zinc-700 bg-zinc-900 p-6 w-80 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                  <p className="text-sm font-semibold text-white mb-4">Login Administrador</p>
+                  <input
+                    type="password"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Senha"
+                    className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-sm text-white outline-none focus:border-amber-400 mb-3"
+                    onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowAdminLogin(false)} className="flex-1 rounded-full border border-zinc-700 px-4 py-2 text-xs text-zinc-400 hover:border-zinc-500">Cancelar</button>
+                    <button onClick={handleAdminLogin} className="flex-1 rounded-full bg-amber-400 px-4 py-2 text-xs font-bold text-black hover:bg-amber-300">Entrar</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="max-h-[calc(100vh-260px)] space-y-2 overflow-y-auto pr-1">
               {lines.map((line, index) => {
