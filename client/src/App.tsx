@@ -1,29 +1,17 @@
-// Imports do React e dos tipos/constantes compartilhadas
 import { useEffect, useMemo, useRef, useState } from "react";
 import { WS_EVENTS, getWsUrl, type WsMessage } from "@shared/const";
 import { useAuth } from "./contexts/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { saveAppState, loadAppState, savePreset, getPresets, deletePreset, type Preset } from "./lib/db";
+import type { ScriptLine } from "@/lib/types";
+import { defaultLines, makeId, now, DEFAULT_TRIGGER } from "@/lib/types";
+import { similarityPercent, wordOverlap } from "@/lib/similarity";
+import { playSyntheticLaugh, playFallbackBeep } from "@/lib/audio";
+import LineList from "@/components/LineList";
+import LineEditor from "@/components/LineEditor";
+import StatusPanel from "@/components/StatusPanel";
+import ToggleSidebar from "@/components/ToggleSidebar";
 
-// Tipo que representa uma fala do roteiro
-type ScriptLine = {
-  id: string;
-  text: string;
-  effectName: string;
-  audioName?: string;
-  audioBlob?: Blob;
-  createdAt: number;
-  updatedAt: number;
-};
-
-// Tipo do estado persistido no IndexedDB
-type PersistedState = {
-  version: 1;
-  threshold: number;
-  lines: ScriptLine[];
-};
-
-// Interface que descreve a API de reconhecimento de fala do navegador
 type SpeechRecognitionLike = {
   lang: string;
   continuous: boolean;
@@ -36,167 +24,11 @@ type SpeechRecognitionLike = {
   onend: (() => void) | null;
 };
 
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-// Declaração global para a API de reconhecimento de voz (Chrome/Edge)
 declare global {
   interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   }
-}
-
-// Frase padrão que dispara a risada sintética automática
-const DEFAULT_TRIGGER = "E ande logo antes que mudem de ideia!";
-
-// Gera um ID único para cada fala (UUID ou fallback)
-const makeId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `fala-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-};
-
-const now = () => Date.now();
-
-// Cria a lista inicial padrão com a fala da risada
-const defaultLines = (): ScriptLine[] => [
-  {
-    id: makeId(),
-    text: DEFAULT_TRIGGER,
-    effectName: "Risada",
-    audioName: "Risada sintética automática",
-    createdAt: now(),
-    updatedAt: now(),
-  },
-];
-
-// Normaliza texto: remove acentos, converte pra minúsculas, remove pontuação
-const normalizeText = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-// Gera bigramas (pares de caracteres consecutivos) para comparação de similaridade
-const bigrams = (value: string) => {
-  const compact = normalizeText(value).replace(/\s+/g, "");
-  if (compact.length < 2) return compact ? [compact] : [];
-  const result: string[] = [];
-  for (let index = 0; index < compact.length - 1; index += 1) {
-    result.push(compact.slice(index, index + 2));
-  }
-  return result;
-};
-
-// Coeficiente de Dice: mede similaridade entre dois textos por bigramas
-function diceSimilarity(left: string, right: string) {
-  const a = bigrams(left);
-  const b = bigrams(right);
-  if (!a.length || !b.length) return 0;
-
-  const counts = new Map<string, number>();
-  for (const item of a) counts.set(item, (counts.get(item) ?? 0) + 1);
-
-  let intersection = 0;
-  for (const item of b) {
-    const count = counts.get(item) ?? 0;
-    if (count > 0) {
-      intersection += 1;
-      counts.set(item, count - 1);
-    }
-  }
-
-  return (2 * intersection) / (a.length + b.length);
-}
-
-// Mede sobreposição de palavras entre dois textos
-function wordOverlap(left: string, right: string) {
-  const a = new Set(normalizeText(left).split(" ").filter(Boolean));
-  const b = new Set(normalizeText(right).split(" ").filter(Boolean));
-  if (!a.size || !b.size) return 0;
-
-  let intersection = 0;
-  Array.from(a).forEach((word) => {
-    if (b.has(word)) intersection += 1;
-  });
-
-  return intersection / Math.max(a.size, b.size);
-}
-
-// Calcula percentual de similaridade combinando inclusão, Dice e sobreposição de palavras
-function similarityPercent(spoken: string, target: string) {
-  const spokenNormalized = normalizeText(spoken);
-  const targetNormalized = normalizeText(target);
-  if (!spokenNormalized || !targetNormalized) return 0;
-  if (spokenNormalized === targetNormalized) return 100;
-
-  const containsScore = spokenNormalized.includes(targetNormalized) || targetNormalized.includes(spokenNormalized) ? 92 : 0;
-  const diceScore = diceSimilarity(spokenNormalized, targetNormalized) * 100;
-  const wordScore = wordOverlap(spokenNormalized, targetNormalized) * 100;
-
-  return Math.round(Math.max(containsScore, diceScore, wordScore));
-}
-
-// Toca uma risada sintética usando Web Audio API (osciladores sawtooth)
-// Retorna o AudioContext para poder pará-lo externamente via stopAllAudio()
-function playSyntheticLaugh() {
-  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) return null;
-
-  const audioContext = new AudioContextClass();
-  const master = audioContext.createGain();
-  master.gain.value = 0.14;
-  master.connect(audioContext.destination);
-
-  // 5 sílabas de risada com frequências crescentes
-  const syllables = [0, 0.18, 0.36, 0.56, 0.76];
-  syllables.forEach((offset, index) => {
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    oscillator.type = "sawtooth";
-    oscillator.frequency.setValueAtTime(360 + index * 35, audioContext.currentTime + offset);
-    oscillator.frequency.exponentialRampToValueAtTime(190 + index * 20, audioContext.currentTime + offset + 0.13);
-    gain.gain.setValueAtTime(0.001, audioContext.currentTime + offset);
-    gain.gain.exponentialRampToValueAtTime(0.55, audioContext.currentTime + offset + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + offset + 0.16);
-    oscillator.connect(gain);
-    gain.connect(master);
-    oscillator.start(audioContext.currentTime + offset);
-    oscillator.stop(audioContext.currentTime + offset + 0.18);
-  });
-
-  // Fecha o AudioContext após a risada terminar
-  window.setTimeout(() => {
-    audioContext.close();
-  }, 1400);
-
-  return audioContext;
-}
-
-// Toca um beep simples (triângulo 740Hz) como fallback quando não há áudio personalizado
-function playFallbackBeep() {
-  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) return null;
-
-  const audioContext = new AudioContextClass();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  oscillator.type = "triangle";
-  oscillator.frequency.value = 740;
-  gain.gain.value = 0.12;
-  oscillator.connect(gain);
-  gain.connect(audioContext.destination);
-  oscillator.start();
-  oscillator.stop(audioContext.currentTime + 0.35);
-  window.setTimeout(() => {
-    audioContext.close();
-  }, 600);
-
-  return audioContext;
 }
 
 function App() {
@@ -232,6 +64,7 @@ function App() {
   const [showPresets, setShowPresets] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [muted, setMuted] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // === Estados de admin e WebSocket ===
   const [isAdminLogin, setIsAdminLogin] = useState(isAdmin);
@@ -774,14 +607,24 @@ function App() {
 
   return (
     <main className="min-h-screen bg-[#070707] text-zinc-100">
-      <section className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 border-zinc-800 lg:grid-cols-[420px_1fr] lg:border-x">
-        {/* Painel lateral esquerdo: lista de falas e controles */}
-        <aside className="border-b border-zinc-800 bg-zinc-950/95 lg:border-b-0 lg:border-r">
-          <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+      <section className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 border-zinc-800 lg:grid-cols-[420px_1fr] lg:border-x relative">
+
+        {/* Sidebar */}
+        <LineList
+          lines={lines}
+          selectedLineId={selectedLineId}
+          onSelect={setSelectedLineId}
+          onAdd={addLine}
+          onDelete={deleteSelectedLine}
+          canDelete={lines.length > 1}
+        />
+
+        {/* Painel direito */}
+        <section className="bg-[#0b0b0b] relative">
+          <header className="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Falas do script</p>
-              <h1 className="mt-1 text-xl font-semibold text-white">Teatro Teleprompter</h1>
-              <p className="text-[10px] text-zinc-500 mt-0.5">
+              <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Editar fala</p>
+              <p className="mt-0.5 text-xs text-zinc-500">
                 {user.username} {isAdmin && <span className="text-amber-400">(admin)</span>}
               </p>
             </div>
@@ -789,183 +632,23 @@ function App() {
               <button onClick={logout} className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition hover:border-red-400 hover:text-red-300">
                 Sair
               </button>
-              <button onClick={addLine} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-100 transition hover:border-emerald-400 hover:text-emerald-300">
-                + Nova fala
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition hover:border-[#ff00aa] hover:text-[#ff00aa]"
+              >
+                Extras
               </button>
             </div>
           </header>
 
-          <div className="space-y-3 p-4">
-            {/* Painel de reconhecimento de voz: ligar/desligar microfone e ajuste de sensibilidade */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-white">Reconhecimento por voz</p>
-                  <p className="text-xs text-zinc-400">Dispara o áudio quando bater pelo menos {threshold}%.</p>
-                </div>
-                <button onClick={isListening ? stopListening : startListening} className={`rounded-full px-4 py-2 text-sm font-semibold transition ${isListening ? "bg-red-500 text-white hover:bg-red-400" : "bg-emerald-500 text-black hover:bg-emerald-400"}`}>
-                  {isListening ? "Parar" : "Ligar mic"}
-                </button>
-              </div>
-              {/* Slider para ajustar o percentual mínimo de similaridade */}
-              <label className="mt-4 block text-xs uppercase tracking-[0.2em] text-zinc-500">Similaridade: {threshold}%</label>
-              <input className="mt-2 w-full accent-emerald-400" type="range" min="40" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
-            </div>
-
-            {/* Painel de controle de áudio: mute, stop, kill */}
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-red-400">Controle de áudio</p>
-                <button onClick={() => { setSoundEnabled((v) => !v); if (soundEnabled) stopAllAudio(); }} className={`rounded-full px-3 py-1 text-xs font-bold transition ${soundEnabled ? "bg-zinc-700 text-zinc-300 hover:bg-zinc-600" : "bg-red-500 text-white hover:bg-red-400"}`}>
-                  {soundEnabled ? "Som ligado" : "Som mudo"}
-                </button>
-              </div>
-
-              {/* Botão MUTE do admin: silencia tudo em todos os sites */}
-              {isAdmin && (
-                <button onClick={toggleMute} className={`w-full mb-2 rounded-full px-4 py-3 text-sm font-bold transition active:scale-95 ${muted ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse" : "bg-zinc-700 text-zinc-200 hover:bg-zinc-600"}`}>
-                  {muted ? "🔇 MUTE ATIVO - clique para reativar" : "🔇 MUTE GLOBAL (admin)"}
-                </button>
-              )}
-
-              <div className="flex gap-2">
-                <button onClick={stopAllAudio} className="flex-1 rounded-full border border-zinc-600 px-4 py-3 text-sm font-bold text-zinc-200 transition hover:bg-zinc-800 active:scale-95">
-                  STOP
-                </button>
-                <button onClick={triggerKillSwitch} className="flex-1 rounded-full border border-red-500/40 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 active:scale-95">
-                  KILL
-                </button>
-              </div>
-              <p className="mt-2 text-[10px] text-zinc-500">WS: {wsStatus} {isTokenBusy ? "| token ocupado" : ""}</p>
-            </div>
-
-            {/* Painel admin: Push-to-Talk (visível apenas para admin) */}
-            {isAdmin && (
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-amber-400 mb-3">Admin: Push-to-Talk</p>
-                <button
-                  onMouseDown={startPtt}
-                  onMouseUp={stopPtt}
-                  onMouseLeave={stopPtt}
-                  onTouchStart={startPtt}
-                  onTouchEnd={stopPtt}
-                  className={`w-full rounded-full px-4 py-3 text-sm font-bold transition active:scale-95 ${isPttHolding ? "bg-red-500 text-white shadow-lg shadow-red-500/30" : "bg-emerald-400 text-black hover:bg-emerald-300"}`}
-                >
-                  {isPttHolding ? "FALANDO..." : "PTT"}
-                </button>
-              </div>
-            )}
-
-            {/* Painel de Predefinições (presets) de áudio/voz */}
-            <div className="rounded-2xl border border-zinc-700/30 bg-zinc-900/40 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">Predefinições</p>
-                <button onClick={() => setShowPresets(!showPresets)} className="text-xs text-emerald-400 hover:underline">
-                  {showPresets ? "fechar" : `${presets.length} salvas`}
-                </button>
-              </div>
-              {showPresets && (
-                <div className="space-y-2">
-                  {/* Salvar preset atual */}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={presetName}
-                      onChange={(e) => setPresetName(e.target.value)}
-                      placeholder="Nome da predefinição"
-                      className="flex-1 rounded-xl border border-zinc-700 bg-black px-3 py-2 text-xs text-white outline-none focus:border-emerald-400"
-                      onKeyDown={(e) => e.key === "Enter" && saveCurrentAsPreset()}
-                    />
-                    <button onClick={saveCurrentAsPreset} disabled={!presetName.trim()} className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-black hover:bg-emerald-400 disabled:opacity-40">
-                      Salvar
-                    </button>
-                  </div>
-                  {/* Lista de presets */}
-                  <div className="max-h-32 space-y-1 overflow-y-auto">
-                    {presets.length === 0 && (
-                      <p className="text-[10px] text-zinc-500">Nenhuma predefinição salva.</p>
-                    )}
-                    {presets.map((preset) => (
-                      <div key={preset.id} className="flex items-center justify-between rounded-xl border border-zinc-800 bg-black/50 px-3 py-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs text-zinc-200">{preset.name}</p>
-                          <p className="truncate text-[10px] text-zinc-500">{preset.effectName}</p>
-                        </div>
-                        <div className="flex gap-1 ml-2">
-                          <button onClick={() => loadPreset(preset)} className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] text-zinc-300 hover:border-emerald-400 hover:text-emerald-300">
-                            Usar
-                          </button>
-                          <button onClick={() => removePreset(preset.id)} className="rounded-lg border border-red-500/30 px-2 py-1 text-[10px] text-red-300 hover:bg-red-500/10">
-                            X
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Lista de falas cadastradas */}
-            <div className="max-h-[calc(100vh-260px)] space-y-2 overflow-y-auto pr-1">
-              {lines.map((line, index) => {
-                const active = line.id === selectedLine?.id;
-                return (
-                  <button key={line.id} onClick={() => setSelectedLineId(line.id)} className={`w-full rounded-2xl border p-4 text-left transition ${active ? "border-emerald-400 bg-emerald-400/10" : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-600"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-xs uppercase tracking-[0.24em] text-zinc-500">Fala {index + 1}</span>
-                      <span className={`rounded-full px-2 py-1 text-[11px] ${line.audioBlob ? "bg-emerald-400/15 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>
-                        {line.audioBlob ? "áudio" : "sem arquivo"}
-                      </span>
-                    </div>
-                    <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-zinc-100">{line.text || "Fala vazia: clique para editar"}</p>
-                    <p className="mt-3 text-xs text-zinc-500">Efeito: {line.effectName || "sem nome"}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </aside>
-
-        {/* Painel direito: edição da fala selecionada */}
-        <section className="bg-[#0b0b0b]">
-          <header className="border-b border-zinc-800 px-6 py-4">
-            <p className="text-xs uppercase tracking-[0.28em] text-zinc-500">Editar fala</p>
-            <p className="mt-1 text-sm text-zinc-400">As alterações e os arquivos de áudio ficam salvos automaticamente no navegador.</p>
-          </header>
-
           <div className="grid gap-6 p-6 xl:grid-cols-[1fr_340px]">
             <div className="space-y-6">
-              {/* Editor de texto da fala */}
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl shadow-black/40">
-                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Texto da fala que será reconhecida</label>
-                <textarea
-                  value={selectedLine?.text ?? ""}
-                  onChange={(event) => updateSelectedLine({ text: event.target.value })}
-                  placeholder="Ex.: E ande logo antes que mudem de ideia!"
-                  className="mt-3 min-h-44 w-full resize-y rounded-2xl border border-zinc-800 bg-black p-4 text-2xl font-semibold leading-relaxed text-white outline-none transition placeholder:text-zinc-700 focus:border-emerald-400"
-                />
-              </div>
-
-              {/* Nome do efeito e upload de arquivo */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Nome do efeito</label>
-                  <input
-                    value={selectedLine?.effectName ?? ""}
-                    onChange={(event) => updateSelectedLine({ effectName: event.target.value })}
-                    placeholder="Risada, aplauso, suspense..."
-                    className="mt-3 w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-white outline-none transition focus:border-emerald-400"
-                  />
-                </div>
-
-                {/* Upload de arquivo de áudio/vídeo para usar como efeito */}
-                <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Arquivo de som do efeito</label>
-                  <input type="file" accept="audio/*,video/*" onChange={(event) => handleFileUpload(event.target.files?.[0])} className="mt-3 w-full rounded-2xl border border-dashed border-zinc-700 bg-black px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-400 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-black" />
-                  <p className="mt-2 text-xs text-zinc-500">{selectedLine?.audioName ?? "Sem arquivo: o site usa risada sintética ou beep como reserva."}</p>
-                </div>
-              </div>
+              <LineEditor
+                line={selectedLine}
+                onUpdate={updateSelectedLine}
+                onPlayEffect={() => selectedLine && playEffect(selectedLine)}
+                onFileUpload={handleFileUpload}
+              />
 
               {/* Botões de ação: testar, exportar, apagar, reiniciar */}
               <div className="flex flex-wrap gap-3">
@@ -976,47 +659,45 @@ function App() {
               </div>
             </div>
 
-            {/* Painéis laterais de status, transcrição e último gatilho */}
-            <div className="space-y-4">
-              {/* Status e mensagens de erro */}
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Status</p>
-                <p className="mt-3 text-sm leading-relaxed text-zinc-300">{status}</p>
-                {error && <p className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
-              </div>
-
-              {/* Transcrição do que foi ouvido e barra de similaridade */}
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Último ouvido</p>
-                <p className="mt-3 min-h-20 rounded-2xl border border-zinc-800 bg-black p-4 text-sm leading-relaxed text-zinc-300">{transcript || "Ligue o microfone e fale uma frase do roteiro."}</p>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
-                  <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${Math.min(100, bestPreview)}%` }} />
-                </div>
-                <p className="mt-2 text-xs text-zinc-500">Parecido com a fala selecionada: {bestPreview}%</p>
-              </div>
-
-              {/* Último gatilho disparado com sucesso */}
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-5">
-                <p className="text-xs uppercase tracking-[0.24em] text-zinc-500">Último gatilho</p>
-                {lastMatch ? (
-                  <div className="mt-3 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-4">
-                    <p className="text-sm font-semibold text-emerald-200">{lastMatch.score}% de similaridade</p>
-                    <p className="mt-2 text-sm leading-relaxed text-zinc-200">{lastMatch.line.text}</p>
-                    <p className="mt-2 text-xs text-zinc-500">Efeito tocado: {lastMatch.line.effectName}</p>
-                  </div>
-                ) : (
-                  <p className="mt-3 text-sm text-zinc-500">Nenhuma fala reconhecida ainda.</p>
-                )}
-              </div>
-
-              {/* Aviso sobre armazenamento no navegador */}
-              <blockquote className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5 text-sm leading-relaxed text-amber-100">
-                GitHub Pages não tem servidor próprio. Por isso, o &ldquo;storage&rdquo; foi feito no navegador com IndexedDB: se fechar e abrir de novo no mesmo navegador, o roteiro e os áudios continuam salvos.
-              </blockquote>
-            </div>
+            <StatusPanel
+              status={status}
+              error={error}
+              transcript={transcript}
+              bestPreview={bestPreview}
+              lastMatch={lastMatch}
+            />
           </div>
         </section>
       </section>
+
+      {/* Sidebar de Extras (presets, mic, audio controls) */}
+      <ToggleSidebar
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(!sidebarOpen)}
+        threshold={threshold}
+        onThresholdChange={setThreshold}
+        isListening={isListening}
+        onToggleMic={isListening ? stopListening : startListening}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => { setSoundEnabled((v) => !v); if (soundEnabled) stopAllAudio(); }}
+        presets={presets}
+        presetName={presetName}
+        onPresetNameChange={setPresetName}
+        onSavePreset={saveCurrentAsPreset}
+        onLoadPreset={loadPreset}
+        onDeletePreset={removePreset}
+        linesCount={lines.length}
+        isAdmin={isAdmin}
+        isPttHolding={isPttHolding}
+        onStartPtt={startPtt}
+        onStopPtt={stopPtt}
+        muted={muted}
+        onToggleMute={toggleMute}
+        onStopAllAudio={stopAllAudio}
+        onKillSwitch={triggerKillSwitch}
+        wsStatus={wsStatus}
+        isTokenBusy={isTokenBusy}
+      />
     </main>
   );
 }
