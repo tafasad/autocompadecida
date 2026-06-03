@@ -33,6 +33,7 @@
             isListening: false,
             transcript: "",
             status: "Iniciando...",
+            soundEnabled: true,
         };
 
         const dbRequest = indexedDB.open(DB_NAME, 1);
@@ -57,6 +58,10 @@
                     saveAll();
                 }
                 state.selectedId = state.lines[0].id;
+                try {
+                    const saved = JSON.parse(localStorage.getItem("soundEnabled"));
+                    if (typeof saved === "boolean") state.soundEnabled = saved;
+                } catch {}
                 render();
             };
         }
@@ -70,6 +75,17 @@
                 store.clear();
                 state.lines.forEach(l => store.add(l));
             };
+        }
+
+        // --- CONTROLE DE ÁUDIO ---
+        const lineCooldowns = {};
+        let lastProcessedTranscript = "";
+        let currentAudio = null;
+        let currentAudioCtx = null;
+
+        function stopAllAudio() {
+            if (currentAudio) { currentAudio.pause(); currentAudio.src = ""; currentAudio = null; }
+            if (currentAudioCtx) { currentAudioCtx.close(); currentAudioCtx = null; }
         }
 
         // --- LÓGICA DE RECONHECIMENTO E ÁUDIO ---
@@ -89,7 +105,10 @@
                     else interim += e.results[i][0].transcript;
                 }
                 state.transcript = (final || interim).trim();
-                checkMatch(state.transcript);
+                if (final.trim()) {
+                    lastProcessedTranscript = "";
+                    checkMatch(final.trim());
+                }
                 render();
             };
 
@@ -99,36 +118,52 @@
         }
 
         function checkMatch(text) {
+            if (!text || text === lastProcessedTranscript) return;
+            if (!state.soundEnabled) return;
+
             const normalized = t => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
             const spoken = normalized(text);
+            if (!spoken) return;
+
+            let bestScore = 0;
+            let bestLine = null;
             
             state.lines.forEach(line => {
                 const target = normalized(line.text);
                 if (!target) return;
                 
-                // Similaridade simples: se o que foi falado contém parte da frase ou vice-versa
                 let score = 0;
                 if (spoken.includes(target) || target.includes(spoken)) score = 100;
                 
-                if (score >= state.threshold) {
-                    playMedia(line);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestLine = line;
                 }
             });
+            
+            if (bestLine && bestScore >= state.threshold) {
+                playMedia(bestLine);
+                lastProcessedTranscript = text;
+            }
         }
 
-        let cooldown = false;
         function playMedia(line) {
-            if (cooldown) return;
-            cooldown = true;
-            setTimeout(() => cooldown = false, 3000);
+            if (!state.soundEnabled) return;
+
+            const now = Date.now();
+            const lastPlayed = lineCooldowns[line.id] || 0;
+            if (now - lastPlayed < 3000) return;
+            lineCooldowns[line.id] = now;
+
+            stopAllAudio();
 
             if (line.media) {
                 const url = URL.createObjectURL(line.media);
                 const a = new Audio(url);
+                currentAudio = a;
                 a.play();
-                a.onended = () => URL.revokeObjectURL(url);
+                a.onended = () => { URL.revokeObjectURL(url); currentAudio = null; };
             } else {
-                // Efeito sintético se não tiver arquivo
                 if (line.text.includes("mudem de ideia") || line.effect.toLowerCase().includes("risada")) {
                     playLaugh();
                 }
@@ -137,6 +172,7 @@
 
         function playLaugh() {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            currentAudioCtx = ctx;
             const g = ctx.createGain(); g.gain.value = 0.1; g.connect(ctx.destination);
             [0, 0.2, 0.4].forEach(o => {
                 const osc = ctx.createOscillator();
@@ -171,6 +207,12 @@
                                 <span>${state.threshold}%</span>
                             </div>
                             <input type="range" min="5" max="95" value="${state.threshold}" oninput="state.threshold=this.value;render()" onchange="saveAll()" class="w-full h-1">
+                        </div>
+                        <div class="flex justify-between items-center pt-1">
+                            <span class="text-xs font-bold text-slate-400 uppercase">Som</span>
+                            <button onclick="toggleSound()" class="px-4 py-1.5 rounded-full text-xs font-black transition-all ${state.soundEnabled ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-500/80 hover:bg-red-400'}">
+                                ${state.soundEnabled ? 'LIGADO' : 'MUDO'}
+                            </button>
                         </div>
                     </div>
 
@@ -230,6 +272,14 @@
             state.isListening = !state.isListening;
             if (state.isListening) recognition.start();
             else recognition.stop();
+            render();
+        }
+
+        function toggleSound() {
+            state.soundEnabled = !state.soundEnabled;
+            if (!state.soundEnabled) stopAllAudio();
+            try { localStorage.setItem("soundEnabled", JSON.stringify(state.soundEnabled)); } catch {}
+            saveAll();
             render();
         }
 

@@ -260,6 +260,7 @@ function App() {
   const [isListening, setIsListening] = useState(false);
   const [lastMatch, setLastMatch] = useState<{ line: ScriptLine; score: number } | null>(null);
   const [error, setError] = useState("");
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // === Estados de admin e WebSocket ===
   const [isAdmin, setIsAdmin] = useState(false);
@@ -273,6 +274,7 @@ function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null); // instância do SpeechRecognition
   const manualStopRef = useRef(false); // se o usuário parou manualmente o microfone
   const cooldownRef = useRef<Record<string, number>>({}); // controle de cooldown entre disparos
+  const lastTranscriptRef = useRef(""); // última transcrição processada para evitar repetição
   const currentAudioRef = useRef<HTMLAudioElement | null>(null); // áudio em reprodução (arquivo)
   const audioContextRef = useRef<AudioContext | null>(null); // contexto de áudio (sons sintéticos)
   const pttStreamRef = useRef<MediaStream | null>(null); // stream do microfone para PTT
@@ -342,7 +344,13 @@ function App() {
         setError("Não foi possível abrir o armazenamento local. O site ainda funciona, mas talvez não salve neste navegador.");
       })
       .finally(() => {
-        if (!cancelled) setIsLoaded(true);
+        if (!cancelled) {
+          try {
+            const saved = JSON.parse(localStorage.getItem("teatro-soundEnabled") ?? "true");
+            if (typeof saved === "boolean") setSoundEnabled(saved);
+          } catch {}
+          setIsLoaded(true);
+        }
       });
 
     return () => {
@@ -362,6 +370,12 @@ function App() {
 
     return () => window.clearTimeout(timer);
   }, [isLoaded, lines, threshold]);
+
+  // Salva preferência de som no localStorage
+  useEffect(() => {
+    if (!isLoaded) return;
+    try { localStorage.setItem("teatro-soundEnabled", JSON.stringify(soundEnabled)); } catch {}
+  }, [isLoaded, soundEnabled]);
 
   // Conexão WebSocket com reconexão automática (backoff exponencial)
   useEffect(() => {
@@ -582,6 +596,7 @@ function App() {
 
   // Toca o efeito sonoro de uma fala, parando qualquer áudio anterior primeiro
   const playEffect = (line: ScriptLine) => {
+    if (!soundEnabled) return;
     stopAllAudio(); // Garante que só UM áudio toque por vez
 
     if (line.audioBlob) {
@@ -616,6 +631,10 @@ function App() {
 
   // Compara o que foi falado com as falas cadastradas e dispara o efeito se bater
   const checkTranscript = (spoken: string) => {
+    if (!soundEnabled) return;
+    if (!spoken || spoken === lastTranscriptRef.current) return;
+    lastTranscriptRef.current = spoken;
+
     const candidates = lines
       .filter((line) => line.text.trim())
       .map((line) => ({
@@ -669,8 +688,10 @@ function App() {
 
       const visibleText = `${finalText} ${interimText}`.trim();
       if (visibleText) setTranscript(visibleText);
-      if (finalText.trim()) checkTranscript(finalText.trim());
-      else if (interimText.trim().length >= 12) checkTranscript(interimText.trim());
+      if (finalText.trim()) {
+        lastTranscriptRef.current = "";
+        checkTranscript(finalText.trim());
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -781,7 +802,12 @@ function App() {
 
             {/* Painel público de parar áudio: STOP (local) e KILL (todos os clientes) */}
             <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-red-400 mb-3">Parar áudio</p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-red-400">Parar áudio</p>
+                <button onClick={() => { setSoundEnabled((v) => !v); if (soundEnabled) stopAllAudio(); }} className={`rounded-full px-3 py-1 text-xs font-bold transition ${soundEnabled ? "bg-zinc-700 text-zinc-300 hover:bg-zinc-600" : "bg-red-500 text-white hover:bg-red-400"}`}>
+                  {soundEnabled ? "Som ligado" : "Som mudo"}
+                </button>
+              </div>
               <div className="flex gap-2">
                 <button onClick={stopAllAudio} className="flex-1 rounded-full border border-zinc-600 px-4 py-3 text-sm font-bold text-zinc-200 transition hover:bg-zinc-800 active:scale-95">
                   STOP {/* Para áudio apenas neste navegador */}
