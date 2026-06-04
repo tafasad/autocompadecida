@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrompterPro — Entrar</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    min-height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── BACKGROUND ── */
+  .bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: linear-gradient(180deg,
+      #1a0533 0%,
+      #2d0b5a 18%,
+      #4a1280 35%,
+      #6b2fa8 52%,
+      #7c3cb8 60%,
+      #5a2d80 72%,
+      #2e1a4a 85%,
+      #1a0e2e 100%
+    );
+  }
+
+  /* Stars */
+  .stars {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  }
+  .star {
+    position: absolute;
+    background: white;
+    border-radius: 50%;
+    animation: twinkle var(--d, 3s) ease-in-out infinite;
+  }
+  @keyframes twinkle {
+    0%,100% { opacity: var(--max, 0.8); }
+    50%      { opacity: 0.1; }
+  }
+
+  /* Moon glow */
+  .moon-glow {
+    position: fixed;
+    top: 6%; right: 18%;
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(220,190,255,0.35) 0%, transparent 70%);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* Purple horizon glow */
+  .horizon-glow {
+    position: fixed;
+    bottom: 28%;
+    left: 50%; transform: translateX(-50%);
+    width: 100%;
+    height: 180px;
+    background: radial-gradient(ellipse 80% 100% at 50% 100%,
+      rgba(160,80,240,0.28) 0%, transparent 80%);
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* Mountain layers */
+  .mountains {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 2;
+    height: 45%;
+    pointer-events: none;
+  }
+
+  /* ── TREES (SVG silhouettes) ── */
+  .trees-svg {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    width: 100%; height: 100%;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: relative; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 5%; height: 62px;
+    background: rgba(20,6,45,0.6);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(180,120,255,0.15);
+  }
+  .logo {
+    font-family: 'Poppins', sans-serif; font-size: 22px; font-weight: 700;
+    color: #fff; text-decoration: none; display: flex; align-items: center; gap: 8px;
+    letter-spacing: 0.5px;
+  }
+  .logo span { color: #bf7fff; }
+  .logo-dot { width: 7px; height: 7px; border-radius: 50%; background: #bf7fff; display: inline-block; animation: blink 1.4s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
+
+  .nav-back {
+    color: rgba(200,170,255,0.8); text-decoration: none; font-size: 13px;
+    display: flex; align-items: center; gap: 6px; transition: color 0.2s;
+  }
+  .nav-back:hover { color: #fff; }
+  .nav-back svg { width: 16px; height: 16px; }
+
+  /* ── PAGE BODY ── */
+  .page-body {
+    position: relative; z-index: 10;
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 40px 20px 160px;
+  }
+
+  /* ── GLASS CARD ── */
+  .glass-card {
+    width: 100%; max-width: 380px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 20px;
+    padding: 40px 36px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow:
+      0 8px 48px rgba(0,0,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.2);
+    animation: cardIn 0.7s cubic-bezier(0.22,1,0.36,1) both;
+  }
+  @keyframes cardIn {
+    from { opacity:0; transform: translateY(24px) scale(0.97); }
+    to   { opacity:1; transform: translateY(0) scale(1); }
+  }
+
+  /* tabs */
+  .tabs {
+    display: flex; border-bottom: 1px solid rgba(255,255,255,0.15); margin-bottom: 32px;
+  }
+  .tab {
+    flex: 1; text-align: center; padding-bottom: 12px; font-size: 15px; font-weight: 600;
+    color: rgba(220,190,255,0.5); cursor: pointer; transition: color 0.2s;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    user-select: none;
+  }
+  .tab.active { color: #fff; border-bottom-color: #bf7fff; }
+
+  /* panels */
+  .panel { display: none; }
+  .panel.active { display: block; animation: fadePanel 0.3s ease both; }
+  @keyframes fadePanel { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+  /* form */
+  .form-title {
+    font-size: 26px; font-weight: 700; color: #fff;
+    text-align: center; margin-bottom: 28px; letter-spacing: 0.3px;
+  }
+
+  .field {
+    position: relative; margin-bottom: 16px;
+  }
+  .field input {
+    width: 100%;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 10px;
+    color: #fff;
+    padding: 13px 44px 13px 16px;
+    font-size: 14px;
+    font-family: 'Poppins', sans-serif;
+    outline: none;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .field input::placeholder { color: rgba(200,170,255,0.55); }
+  .field input:focus {
+    border-color: rgba(190,130,255,0.7);
+    background: rgba(255,255,255,0.14);
+  }
+  .field-icon {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+    color: rgba(200,170,255,0.6); pointer-events: none;
+  }
+  .field-icon svg { width: 17px; height: 17px; display: block; }
+
+  .row-extra {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 22px; font-size: 12px;
+  }
+  .remember {
+    display: flex; align-items: center; gap: 7px;
+    color: rgba(220,190,255,0.75); cursor: pointer;
+  }
+  .remember input[type="checkbox"] {
+    width: 14px; height: 14px; accent-color: #bf7fff; cursor: pointer;
+  }
+  .forgot { color: rgba(220,190,255,0.75); text-decoration: none; transition: color 0.2s; font-size: 12px; }
+  .forgot:hover { color: #fff; }
+
+  .btn-submit {
+    width: 100%;
+    background: rgba(255,255,255,0.92);
+    color: #3d0f7a;
+    border: none;
+    border-radius: 10px;
+    padding: 13px;
+    font-size: 15px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s;
+  }
+  .btn-submit:hover { background: #fff; transform: translateY(-1px); }
+  .btn-submit:active { transform: translateY(0); }
+
+  .card-footer {
+    text-align: center; margin-top: 18px;
+    font-size: 13px; color: rgba(200,170,255,0.65);
+  }
+  .card-footer a { color: #d0a0ff; font-weight: 600; text-decoration: none; }
+  .card-footer a:hover { text-decoration: underline; }
+
+  /* divider */
+  .divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 20px 0 16px; color: rgba(200,170,255,0.45); font-size: 12px;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.12);
+  }
+
+  /* social */
+  .social-row { display: flex; gap: 10px; justify-content: center; }
+  .s-btn {
+    flex: 1; height: 42px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.08);
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    color: rgba(220,190,255,0.85); font-size: 12px; font-weight: 500;
+    cursor: pointer; text-decoration: none;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .s-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.3); color: #fff; }
+  .s-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+  /* ── FOOTER TREES on top of mountains ── */
+  .scene {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<!-- BG -->
+<div class="bg"></div>
+
+<!-- STARS (generated by JS) -->
+<div class="stars" id="stars"></div>
+<div class="moon-glow"></div>
+<div class="horizon-glow"></div>
+
+<!-- NATURE SCENE -->
+<div class="scene">
+  <svg viewBox="0 0 1440 320" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="width:100%;display:block;">
+    <!-- far mountains -->
+    <path d="M0,200 L60,140 L130,170 L200,110 L280,160 L360,95 L440,145 L520,80 L600,130 L680,75 L760,125 L840,65 L920,120 L1000,80 L1080,115 L1160,70 L1240,110 L1320,85 L1380,105 L1440,90 L1440,320 L0,320Z" fill="rgba(60,20,100,0.7)"/>
+    <!-- mid mountains -->
+    <path d="M0,230 L80,175 L160,205 L240,150 L340,190 L420,135 L500,180 L580,145 L660,185 L740,140 L820,175 L900,130 L980,165 L1060,135 L1140,170 L1220,145 L1300,165 L1380,150 L1440,158 L1440,320 L0,320Z" fill="rgba(35,10,70,0.85)"/>
+    <!-- near dark ground -->
+    <path d="M0,280 L1440,280 L1440,320 L0,320Z" fill="#0e0520"/>
+    <!-- trees left group -->
+    <g fill="#0e0520">
+      <!-- left trees -->
+      <polygon points="30,280 50,200 70,280"/>
+      <polygon points="20,280 44,210 68,280"/>
+      <polygon points="55,280 80,190 105,280"/>
+      <polygon points="80,280 108,195 136,280"/>
+      <polygon points="100,280 130,185 160,280"/>
+      <polygon points="5,280 22,220 39,280"/>
+      <!-- left fill trees (smaller) -->
+      <polygon points="0,280 12,240 24,280"/>
+      <polygon points="120,280 140,210 160,280"/>
+      <polygon points="145,280 168,200 191,280"/>
+      <polygon points="175,280 200,195 225,280"/>
+      <polygon points="200,280 230,205 260,280"/>
+      <polygon points="235,280 260,215 285,280"/>
+      <!-- right trees -->
+      <polygon points="1260,280 1285,195 1310,280"/>
+      <polygon points="1285,280 1310,185 1335,280"/>
+      <polygon points="1305,280 1335,190 1365,280"/>
+      <polygon points="1330,280 1358,200 1386,280"/>
+      <polygon points="1355,280 1385,195 1415,280"/>
+      <polygon points="1390,280 1415,210 1440,280"/>
+      <polygon points="1235,280 1257,210 1279,280"/>
+      <polygon points="1210,280 1235,205 1260,280"/>
+      <polygon points="1180,280 1207,210 1234,280"/>
+      <!-- mid bottom trees -->
+      <polygon points="580,280 600,210 620,280"/>
+      <polygon points="600,280 625,200 650,280"/>
+      <polygon points="625,280 653,192 681,280"/>
+      <polygon points="655,280 680,202 705,280"/>
+      <polygon points="680,280 706,208 732,280"/>
+      <polygon points="710,280 735,198 760,280"/>
+      <polygon points="738,280 764,205 790,280"/>
+      <polygon points="765,280 790,210 815,280"/>
+      <polygon points="792,280 818,200 844,280"/>
+      <polygon points="820,280 845,205 870,280"/>
+      <polygon points="848,280 875,196 902,280"/>
+    </g>
+    <!-- trunks -->
+    <g fill="#080410">
+      <rect x="48" y="270" width="4" height="10"/>
+      <rect x="78" y="270" width="4" height="10"/>
+      <rect x="128" y="270" width="5" height="10"/>
+      <rect x="198" y="270" width="5" height="10"/>
+      <rect x="600" y="270" width="5" height="10"/>
+      <rect x="651" y="270" width="5" height="10"/>
+      <rect x="704" y="270" width="5" height="10"/>
+      <rect x="757" y="270" width="5" height="10"/>
+      <rect x="810" y="270" width="5" height="10"/>
+      <rect x="1283" y="270" width="5" height="10"/>
+      <rect x="1333" y="270" width="5" height="10"/>
+      <rect x="1383" y="270" width="5" height="10"/>
+    </g>
+  </svg>
+</div>
+
+<!-- NAV -->
+<nav>
+  <a class="logo" href="teleprompter-landing.html">
+    <span class="logo-dot"></span>Prompter<span>Pro</span>
+  </a>
+  <a class="nav-back" href="teleprompter-landing.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 12H5M12 19l-7-7 7-7"/>
+    </svg>
+    Voltar ao site
+  </a>
+</nav>
+
+<!-- MAIN -->
+<div class="page-body">
+  <div class="glass-card">
+
+    <!-- TABS -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('login')">Entrar</div>
+      <div class="tab" onclick="switchTab('register')">Criar Conta</div>
+    </div>
+
+    <!-- LOGIN PANEL -->
+    <div class="panel active" id="panel-login">
+      <div class="form-title">Login</div>
+
+      <div class="field">
+        <input type="text" placeholder="Usuário ou e-mail">
+        <span class="field-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </span>
+      </div>
+
+      <div class="field">
+        <input type="password" placeholder="Senha" id="pw-login">
+        <span class="field-icon" style="cursor:pointer" onclick="togglePw('pw-login',this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </span>
+      </div>
+
+      <div class="row-extra">
+        <label class="remember">
+          <input type="checkbox"> Lembrar-me
+        </label>
+        <a href="#" class="forgot">Esqueceu a senha?</a>
+      </div>
+
+      <button class="btn-submit">Entrar</button>
+
+      <div class="divider">ou entre com</div>
+      <div class="social-row">
+        <a href="#" class="s-btn">
+          <svg viewBox="0 0 24 24"><path d="M21.8 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5.5c-.2 1.2-.9 2.2-1.9 2.9v2.4h3.1c1.8-1.7 2.8-4.1 2.8-7z" fill="#4285F4"/><path d="M12 22c2.7 0 5-.9 6.7-2.4l-3.1-2.4c-.9.6-2 .9-3.6.9-2.8 0-5.1-1.9-5.9-4.4H3v2.5C4.7 19.9 8.1 22 12 22z" fill="#34A853"/><path d="M6.1 13.7c-.2-.6-.3-1.2-.3-1.7s.1-1.1.3-1.7V7.8H3C2.4 9 2 10.4 2 12s.4 3 1 4.2l3.1-2.5z" fill="#FBBC05"/><path d="M12 5.4c1.5 0 2.9.5 3.9 1.6l2.9-2.9C17 2.4 14.7 1.4 12 1.4 8.1 1.4 4.7 3.5 3 6.8l3.1 2.5c.8-2.5 3.1-3.9 5.9-3.9z" fill="#EA4335"/></svg>
+          Google
+        </a>
+        <a href="#" class="s-btn">
+          <svg viewBox="0 0 24 24" fill="rgba(220,190,255,0.85)"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          X
+        </a>
+      </div>
+
+      <div class="card-footer">
+        Não tem conta? <a href="#" onclick="switchTab('register')">Cadastre-se</a>
+      </div>
+    </div>
+
+    <!-- REGISTER PANEL -->
+    <div class="panel" id="panel-register">
+      <div class="form-title">Criar Conta</div>
+
+      <div class="field">
+        <input type="text" placeholder="Seu nome completo">
+        <span class="field-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </span>
+      </div>
+
+      <div class="field">
+        <input type="email" placeholder="Seu e-mail">
+        <span class="field-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </span>
+      </div>
+
+      <div class="field">
+        <input type="password" placeholder="Crie uma senha" id="pw-reg">
+        <span class="field-icon" style="cursor:pointer" onclick="togglePw('pw-reg',this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </span>
+      </div>
+
+      <div style="margin-bottom:22px"></div>
+
+      <button class="btn-submit">Criar Conta Grátis</button>
+
+      <div class="card-footer" style="margin-top:14px">
+        Já tem conta? <a href="#" onclick="switchTab('login')">Entrar</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Generate stars
+  const starsEl = document.getElementById('stars');
+  for (let i = 0; i < 110; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const size = Math.random() * 2.2 + 0.5;
+    s.style.cssText = `
+      width:${size}px; height:${size}px;
+      top:${Math.random()*65}%;
+      left:${Math.random()*100}%;
+      --max:${Math.random()*0.7+0.3};
+      --d:${Math.random()*4+2}s;
+      animation-delay:${Math.random()*5}s;
+    `;
+    starsEl.appendChild(s);
+  }
+
+  // Tab switch
+  function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
+    document.getElementById('panel-login').classList.toggle('active', tab==='login');
+    document.getElementById('panel-register').classList.toggle('active', tab==='register');
+  }
+
+  // Check hash on load
+  if (location.hash === '#register') switchTab('register');
+
+  // Toggle password visibility
+  function togglePw(id, btn) {
+    const inp = document.getElementById(id);
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    btn.style.color = inp.type === 'text' ? 'rgba(200,170,255,1)' : 'rgba(200,170,255,0.6)';
+  }
+</script>
+</body>
+</html>

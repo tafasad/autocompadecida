@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrompterPro — Fale com Confiança</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Poppins', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    color: #fff;
+  }
+
+  /* ── BG ── */
+  .bg {
+    position: fixed; inset: 0; z-index: 0;
+    background: linear-gradient(180deg,
+      #1a0533 0%, #2d0b5a 18%, #4a1280 35%,
+      #6b2fa8 52%, #7c3cb8 60%,
+      #5a2d80 72%, #2e1a4a 85%, #1a0e2e 100%
+    );
+  }
+
+  .stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+  .star {
+    position: absolute; background: white; border-radius: 50%;
+    animation: twinkle var(--d, 3s) ease-in-out infinite;
+  }
+  @keyframes twinkle { 0%,100%{opacity:var(--max,.8)} 50%{opacity:.1} }
+
+  .moon-glow {
+    position: fixed; top: 6%; right: 15%;
+    width: 100px; height: 100px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(220,190,255,0.3) 0%, transparent 70%);
+    z-index: 1; pointer-events: none;
+  }
+
+  .horizon-glow {
+    position: fixed; bottom: 28%; left: 50%; transform: translateX(-50%);
+    width: 100%; height: 200px;
+    background: radial-gradient(ellipse 80% 100% at 50% 100%, rgba(160,80,240,0.25) 0%, transparent 80%);
+    z-index: 1; pointer-events: none;
+  }
+
+  /* ── NATURE SCENE (fixed bottom) ── */
+  .scene {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    z-index: 3; pointer-events: none;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: relative; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 6%; height: 64px;
+    background: rgba(20,6,45,0.55);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(180,120,255,0.15);
+  }
+  .logo {
+    font-size: 22px; font-weight: 700; color: #fff;
+    text-decoration: none; display: flex; align-items: center; gap: 8px;
+  }
+  .logo span { color: #bf7fff; }
+  .logo-dot { width: 7px; height: 7px; border-radius: 50%; background: #bf7fff; display: inline-block; animation: blink 1.4s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+
+  .nav-links { display: flex; gap: 28px; list-style: none; }
+  .nav-links a {
+    color: rgba(210,180,255,0.65); text-decoration: none; font-size: 13px;
+    font-weight: 500; letter-spacing: .06em; text-transform: uppercase;
+    transition: color .2s;
+  }
+  .nav-links a:hover { color: #fff; }
+
+  .nav-actions { display: flex; gap: 10px; }
+  .btn-ghost-nav {
+    color: rgba(220,190,255,0.9); border: 1px solid rgba(180,120,255,0.35);
+    padding: 8px 22px; font-size: 13px; font-weight: 600; font-family: 'Poppins', sans-serif;
+    border-radius: 8px; cursor: pointer; text-decoration: none; background: rgba(255,255,255,0.05);
+    transition: all .2s;
+  }
+  .btn-ghost-nav:hover { border-color: #bf7fff; color: #fff; background: rgba(191,127,255,0.1); }
+  .btn-solid-nav {
+    color: #2a0060; background: rgba(255,255,255,0.9);
+    padding: 8px 22px; font-size: 13px; font-weight: 700; font-family: 'Poppins', sans-serif;
+    border: none; border-radius: 8px; cursor: pointer; text-decoration: none;
+    transition: background .2s, transform .15s;
+  }
+  .btn-solid-nav:hover { background: #fff; transform: translateY(-1px); }
+
+  /* ── PAGE ── */
+  .page { position: relative; z-index: 10; }
+
+  /* ── HERO ── */
+  .hero {
+    display: flex; flex-direction: column; align-items: center;
+    text-align: center; padding: 90px 6% 60px;
+    animation: fadeUp .9s ease both;
+  }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(28px)} to{opacity:1;transform:translateY(0)} }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(191,127,255,0.18); border: 1px solid rgba(191,127,255,0.35);
+    color: #d8aaff; font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; padding: 5px 16px; border-radius: 20px; margin-bottom: 30px;
+  }
+  .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #bf7fff; animation: blink 1.4s infinite; }
+
+  .hero h1 {
+    font-size: clamp(48px, 8vw, 96px); font-weight: 800;
+    line-height: .95; letter-spacing: -1px; margin-bottom: 10px;
+  }
+  .hero h1 .accent { color: #bf7fff; }
+  .hero h1 .dim { color: rgba(220,190,255,0.7); }
+
+  .hero p {
+    font-size: 16px; color: rgba(210,180,255,0.7); line-height: 1.75;
+    max-width: 500px; margin: 24px auto 42px; font-weight: 300;
+  }
+
+  .hero-ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 64px; }
+  .btn-primary {
+    background: rgba(255,255,255,0.92); color: #3d0f7a; border: none;
+    padding: 14px 38px; font-size: 14px; font-weight: 700;
+    font-family: 'Poppins', sans-serif; border-radius: 10px; cursor: pointer;
+    text-decoration: none; transition: background .2s, transform .15s;
+  }
+  .btn-primary:hover { background: #fff; transform: translateY(-2px); }
+
+  .btn-outline {
+    color: rgba(220,190,255,0.9); border: 1px solid rgba(191,127,255,0.4);
+    padding: 13px 32px; font-size: 14px; font-weight: 500;
+    font-family: 'Poppins', sans-serif; border-radius: 10px; cursor: pointer;
+    text-decoration: none; background: rgba(255,255,255,0.06);
+    transition: all .2s;
+  }
+  .btn-outline:hover { border-color: #bf7fff; color: #fff; background: rgba(191,127,255,0.1); }
+
+  /* ── GLASS PROMPTER ── */
+  .prompter-wrap {
+    width: 100%; max-width: 680px; margin: 0 auto;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 16px; padding: 22px 28px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .prompter-top {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;
+  }
+  .prompter-label {
+    font-size: 10px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase;
+    color: #bf7fff; display: flex; align-items: center; gap: 7px;
+  }
+  .prompter-controls { display: flex; gap: 8px; }
+  .p-ctrl {
+    width: 26px; height: 26px; border-radius: 6px;
+    background: rgba(191,127,255,0.15); border: 1px solid rgba(191,127,255,0.25);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: rgba(220,190,255,0.8); font-size: 11px;
+    transition: background .2s;
+  }
+  .p-ctrl:hover { background: rgba(191,127,255,0.28); }
+  .prompter-text {
+    font-size: 20px; font-weight: 400; color: rgba(255,255,255,0.9);
+    line-height: 1.5; white-space: nowrap; overflow: hidden;
+    animation: scroll-text 18s linear infinite;
+  }
+  @keyframes scroll-text { 0%{transform:translateX(100%)} 100%{transform:translateX(-130%)} }
+
+  /* ── SECTION GLASS CARDS ── */
+  .section-title {
+    text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: #bf7fff; margin-bottom: 14px;
+  }
+  .section-heading {
+    text-align: center; font-size: clamp(26px, 4vw, 38px); font-weight: 700;
+    color: #fff; margin-bottom: 10px; line-height: 1.2;
+  }
+  .section-sub {
+    text-align: center; font-size: 15px; color: rgba(210,180,255,0.6);
+    max-width: 460px; margin: 0 auto 48px; font-weight: 300; line-height: 1.7;
+  }
+
+  /* FEATURES */
+  .features-section {
+    position: relative; z-index: 10;
+    padding: 80px 6% 80px;
+    animation: fadeUp .9s .15s ease both; opacity: 0;
+  }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 18px; max-width: 1000px; margin: 0 auto;
+  }
+  .feature-card {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 16px; padding: 28px 24px;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.12);
+    transition: transform .2s, background .2s;
+  }
+  .feature-card:hover { transform: translateY(-4px); background: rgba(255,255,255,0.1); }
+  .feature-icon {
+    width: 50px; height: 50px; border-radius: 14px;
+    background: rgba(191,127,255,0.2); border: 1px solid rgba(191,127,255,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; margin-bottom: 18px;
+  }
+  .feature-title { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+  .feature-desc { font-size: 13px; color: rgba(210,180,255,0.6); line-height: 1.65; font-weight: 300; }
+
+  /* STATS */
+  .stats-section {
+    position: relative; z-index: 10;
+    padding: 0 6% 80px;
+    animation: fadeUp .9s .25s ease both; opacity: 0;
+  }
+  .stats-glass {
+    max-width: 860px; margin: 0 auto;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 20px; padding: 10px 0;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.15);
+    display: grid; grid-template-columns: repeat(4, 1fr);
+  }
+  .stat-item {
+    text-align: center; padding: 28px 16px;
+    border-right: 1px solid rgba(255,255,255,0.1);
+  }
+  .stat-item:last-child { border-right: none; }
+  .stat-number { font-size: 40px; font-weight: 800; color: #d8aaff; line-height: 1; letter-spacing: -1px; }
+  .stat-label { font-size: 12px; color: rgba(210,180,255,0.55); text-transform: uppercase; letter-spacing: .1em; margin-top: 6px; font-weight: 500; }
+
+  /* PRICING */
+  .pricing-section {
+    position: relative; z-index: 10;
+    padding: 0 6% 100px;
+    animation: fadeUp .9s .3s ease both; opacity: 0;
+  }
+  .pricing-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px; max-width: 900px; margin: 0 auto;
+  }
+  .pricing-card {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 20px; padding: 32px 28px;
+    backdrop-filter: blur(18px);
+    box-shadow: 0 4px 28px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.12);
+    transition: transform .2s;
+  }
+  .pricing-card.featured {
+    border-color: rgba(191,127,255,0.5);
+    background: rgba(191,127,255,0.12);
+    box-shadow: 0 8px 40px rgba(100,30,200,0.3), inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .pricing-card:hover { transform: translateY(-4px); }
+  .plan-badge {
+    display: inline-block; background: rgba(191,127,255,0.25); color: #d8aaff;
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    padding: 4px 12px; border-radius: 20px; margin-bottom: 16px;
+    border: 1px solid rgba(191,127,255,0.3);
+  }
+  .plan-badge.hot { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
+  .plan-price { font-size: 42px; font-weight: 800; color: #fff; line-height: 1; margin-bottom: 4px; }
+  .plan-price span { font-size: 16px; font-weight: 400; color: rgba(210,180,255,0.6); }
+  .plan-name { font-size: 14px; color: rgba(210,180,255,0.6); margin-bottom: 24px; font-weight: 300; }
+  .plan-features { list-style: none; margin-bottom: 28px; }
+  .plan-features li {
+    font-size: 13px; color: rgba(220,190,255,0.8); padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    display: flex; align-items: center; gap: 8px; font-weight: 300;
+  }
+  .plan-features li::before { content: '✦'; color: #bf7fff; font-size: 9px; flex-shrink: 0; }
+  .btn-plan {
+    width: 100%; padding: 12px; border-radius: 10px; border: none;
+    font-size: 14px; font-weight: 700; font-family: 'Poppins', sans-serif; cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-plan.outlined {
+    background: transparent; color: rgba(220,190,255,0.9);
+    border: 1px solid rgba(191,127,255,0.4);
+  }
+  .btn-plan.outlined:hover { background: rgba(191,127,255,0.1); border-color: #bf7fff; color: #fff; }
+  .btn-plan.filled { background: rgba(255,255,255,0.92); color: #3d0f7a; }
+  .btn-plan.filled:hover { background: #fff; transform: translateY(-1px); }
+
+  /* CTA BOTTOM */
+  .cta-section {
+    position: relative; z-index: 10;
+    padding: 0 6% 200px; text-align: center;
+    animation: fadeUp .9s .35s ease both; opacity: 0;
+  }
+  .cta-glass {
+    max-width: 620px; margin: 0 auto;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 24px; padding: 52px 40px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 48px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .cta-glass h2 { font-size: 32px; font-weight: 700; color: #fff; margin-bottom: 12px; }
+  .cta-glass p { font-size: 15px; color: rgba(210,180,255,0.65); margin-bottom: 32px; font-weight: 300; line-height: 1.7; }
+
+  @media(max-width:768px) {
+    .nav-links{display:none}
+    .stats-glass{grid-template-columns:repeat(2,1fr)}
+    .stat-item:nth-child(2){border-right:none}
+    .stat-item:nth-child(3){border-top:1px solid rgba(255,255,255,.1)}
+  }
+</style>
+</head>
+<body>
+
+<div class="bg"></div>
+<div class="stars" id="stars"></div>
+<div class="moon-glow"></div>
+<div class="horizon-glow"></div>
+
+<!-- SCENE -->
+<div class="scene">
+  <svg viewBox="0 0 1440 320" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="width:100%;display:block;">
+    <path d="M0,200 L60,140 L130,170 L200,110 L280,160 L360,95 L440,145 L520,80 L600,130 L680,75 L760,125 L840,65 L920,120 L1000,80 L1080,115 L1160,70 L1240,110 L1320,85 L1380,105 L1440,90 L1440,320 L0,320Z" fill="rgba(60,20,100,0.7)"/>
+    <path d="M0,230 L80,175 L160,205 L240,150 L340,190 L420,135 L500,180 L580,145 L660,185 L740,140 L820,175 L900,130 L980,165 L1060,135 L1140,170 L1220,145 L1300,165 L1380,150 L1440,158 L1440,320 L0,320Z" fill="rgba(35,10,70,0.85)"/>
+    <path d="M0,280 L1440,280 L1440,320 L0,320Z" fill="#0e0520"/>
+    <g fill="#0e0520">
+      <polygon points="20,280 44,205 68,280"/><polygon points="45,280 72,195 99,280"/>
+      <polygon points="70,280 100,188 130,280"/><polygon points="98,280 130,193 162,280"/>
+      <polygon points="125,280 158,185 191,280"/><polygon points="155,280 190,195 225,280"/>
+      <polygon points="185,280 220,200 255,280"/><polygon points="215,280 250,205 285,280"/>
+      <polygon points="0,280 15,238 30,280"/>
+      <polygon points="555,280 578,210 601,280"/><polygon points="578,280 605,198 632,280"/>
+      <polygon points="605,280 635,190 665,280"/><polygon points="635,280 662,196 689,280"/>
+      <polygon points="665,280 693,188 721,280"/><polygon points="695,280 722,194 749,280"/>
+      <polygon points="722,280 750,200 778,280"/><polygon points="750,280 778,193 806,280"/>
+      <polygon points="778,280 808,188 838,280"/><polygon points="808,280 838,196 868,280"/>
+      <polygon points="838,280 870,192 902,280"/>
+      <polygon points="1175,280 1200,205 1225,280"/><polygon points="1200,280 1228,195 1256,280"/>
+      <polygon points="1228,280 1258,188 1288,280"/><polygon points="1258,280 1288,193 1318,280"/>
+      <polygon points="1288,280 1320,185 1352,280"/><polygon points="1320,280 1352,192 1384,280"/>
+      <polygon points="1352,280 1385,198 1418,280"/><polygon points="1385,280 1415,205 1440,280"/>
+      <polygon points="1410,280 1440,215 1440,280"/>
+    </g>
+    <g fill="#080410">
+      <rect x="42" y="270" width="4" height="10"/><rect x="98" y="270" width="5" height="10"/>
+      <rect x="158" y="270" width="5" height="10"/><rect x="630" y="270" width="5" height="10"/>
+      <rect x="690" y="270" width="5" height="10"/><rect x="748" y="270" width="5" height="10"/>
+      <rect x="806" y="270" width="5" height="10"/><rect x="864" y="270" width="5" height="10"/>
+      <rect x="1255" y="270" width="5" height="10"/><rect x="1315" y="270" width="5" height="10"/>
+      <rect x="1380" y="270" width="5" height="10"/>
+    </g>
+  </svg>
+</div>
+
+<!-- NAV -->
+<nav>
+  <a class="logo" href="#">
+    <span class="logo-dot"></span>Prompter<span>Pro</span>
+  </a>
+  <ul class="nav-links">
+    <li><a href="#">Home</a></li>
+    <li><a href="#">Recursos</a></li>
+    <li><a href="#">Planos</a></li>
+    <li><a href="#">Blog</a></li>
+    <li><a href="#">Contato</a></li>
+  </ul>
+  <div class="nav-actions">
+    <a href="teleprompter-login.html" class="btn-ghost-nav">Entrar</a>
+    <a href="teleprompter-login.html#register" class="btn-solid-nav">Criar Conta</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="badge"><span class="badge-dot"></span> Novo · Modo Câmera ao Vivo</div>
+
+    <h1>
+      Leia.<br>
+      <span class="accent">Apresente.</span><br>
+      <span class="dim">Conquiste.</span>
+    </h1>
+
+    <p>O teleprompter profissional online para criadores, jornalistas e palestrantes. Controle total, velocidade ajustável e modo espelho — tudo no seu navegador.</p>
+
+    <div class="hero-ctas">
+      <a href="teleprompter-login.html#register" class="btn-primary">Começar Grátis</a>
+      <a href="#" class="btn-outline">▶ Ver Demo</a>
+    </div>
+
+    <div class="prompter-wrap">
+      <div class="prompter-top">
+        <div class="prompter-label"><span class="badge-dot"></span> Preview ao vivo</div>
+        <div class="prompter-controls">
+          <div class="p-ctrl">◀◀</div>
+          <div class="p-ctrl">▶</div>
+          <div class="p-ctrl">A+</div>
+        </div>
+      </div>
+      <div class="prompter-text">
+        Bem-vindo ao PrompterPro — onde cada palavra flui com perfeição. Grave vídeos, apresente ao vivo, fale com confiança total. ✦
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="features-section">
+    <div class="section-title">Por que escolher</div>
+    <div class="section-heading">Tudo que você precisa</div>
+    <div class="section-sub">Ferramentas profissionais pensadas para quem faz conteúdo de verdade.</div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <div class="feature-title">Velocidade Ajustável</div>
+        <div class="feature-desc">Controle a rolagem em tempo real com teclado, mouse ou controle remoto Bluetooth.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔠</div>
+        <div class="feature-title">Fonte Personalizável</div>
+        <div class="feature-desc">Tamanho, cor, espaçamento e família da fonte totalmente configuráveis para máxima legibilidade.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🪞</div>
+        <div class="feature-title">Modo Espelho</div>
+        <div class="feature-desc">Compatível com teleprompters físicos e beam splitters. Espelha horizontal e verticalmente.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📱</div>
+        <div class="feature-title">Multi-dispositivo</div>
+        <div class="feature-desc">Funciona em celular, tablet, notebook e desktop. Zero instalação, abre direto no navegador.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">☁️</div>
+        <div class="feature-title">Scripts na Nuvem</div>
+        <div class="feature-desc">Salve e organize seus roteiros online. Acesse de qualquer lugar, a qualquer hora.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🎙️</div>
+        <div class="feature-title">Controle por Voz</div>
+        <div class="feature-desc">Avance as páginas usando comandos de voz para manter as mãos livres durante a gravação.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <section class="stats-section">
+    <div class="stats-glass">
+      <div class="stat-item"><div class="stat-number">50K+</div><div class="stat-label">Usuários Ativos</div></div>
+      <div class="stat-item"><div class="stat-number">98%</div><div class="stat-label">Satisfação</div></div>
+      <div class="stat-item"><div class="stat-number">4K</div><div class="stat-label">Scripts / Dia</div></div>
+      <div class="stat-item"><div class="stat-number">12+</div><div class="stat-label">Idiomas</div></div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section class="pricing-section">
+    <div class="section-title">Planos</div>
+    <div class="section-heading">Simples e transparente</div>
+    <div class="section-sub">Comece grátis. Faça upgrade quando quiser.</div>
+
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="plan-badge">Grátis</div>
+        <div class="plan-price">R$0 <span>/ mês</span></div>
+        <div class="plan-name">Para começar</div>
+        <ul class="plan-features">
+          <li>3 scripts salvos</li>
+          <li>Velocidade ajustável</li>
+          <li>Tamanho de fonte</li>
+          <li>Modo escuro</li>
+        </ul>
+        <a href="teleprompter-login.html#register" class="btn-plan outlined">Começar Grátis</a>
+      </div>
+
+      <div class="pricing-card featured">
+        <div class="plan-badge hot">✦ Popular</div>
+        <div class="plan-price">R$29 <span>/ mês</span></div>
+        <div class="plan-name">Para criadores</div>
+        <ul class="plan-features">
+          <li>Scripts ilimitados</li>
+          <li>Modo espelho</li>
+          <li>Controle remoto</li>
+          <li>Controle por voz</li>
+          <li>Sincronização em nuvem</li>
+        </ul>
+        <a href="teleprompter-login.html#register" class="btn-plan filled">Assinar Pro</a>
+      </div>
+
+      <div class="pricing-card">
+        <div class="plan-badge">Studio</div>
+        <div class="plan-price">R$79 <span>/ mês</span></div>
+        <div class="plan-name">Para equipes</div>
+        <ul class="plan-features">
+          <li>Tudo do Pro</li>
+          <li>Até 10 membros</li>
+          <li>Scripts compartilhados</li>
+          <li>Suporte prioritário</li>
+        </ul>
+        <a href="teleprompter-login.html#register" class="btn-plan outlined">Assinar Studio</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="cta-glass">
+      <h2>Pronto para apresentar?</h2>
+      <p>Junte-se a mais de 50 mil criadores que já falam com mais confiança usando o PrompterPro.</p>
+      <a href="teleprompter-login.html#register" class="btn-primary">Criar Conta Grátis</a>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // Stars
+  const starsEl = document.getElementById('stars');
+  for (let i = 0; i < 130; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const sz = Math.random() * 2.3 + 0.4;
+    s.style.cssText = `width:${sz}px;height:${sz}px;top:${Math.random()*70}%;left:${Math.random()*100}%;--max:${Math.random()*.7+.3};--d:${Math.random()*4+2}s;animation-delay:${Math.random()*6}s`;
+    starsEl.appendChild(s);
+  }
+
+  // Scroll reveal
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => { if(e.isIntersecting) { e.target.style.animationPlayState='running'; } });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.features-section,.stats-section,.pricing-section,.cta-section').forEach(el => {
+    el.style.animationPlayState = 'paused';
+    observer.observe(el);
+  });
+</script>
+</body>
+</html>
