@@ -30,8 +30,21 @@ export const defaultLines = (): ScriptLine[] => [
     id: makeId(),
     text: DEFAULT_TRIGGER,
     effectName: "Risada",
-    audioName: "Risada sint├®tica autom├ítica",
+    audioName: "Risada sintética automática",
     createdAt: now(),
     updatedAt: now(),
   },
 ];
+
+export interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: any) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: any) => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}

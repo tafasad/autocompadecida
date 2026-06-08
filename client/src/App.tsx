@@ -5,7 +5,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { saveAppState, loadAppState, savePreset, getPresets, deletePreset, type Preset } from "./lib/db";
 import type { ScriptLine } from "@/lib/types";
 import { defaultLines, makeId, now, DEFAULT_TRIGGER } from "@/lib/types";
-import { similarityPercent, wordOverlap } from "@/lib/similarity";
+import { similarityPercent, wordOverlap, normalizeText } from "@/lib/similarity";
 import { playSyntheticLaugh, playFallbackBeep } from "@/lib/audio";
 import LineList from "@/components/LineList";
 import LineEditor from "@/components/LineEditor";
