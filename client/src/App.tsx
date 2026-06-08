@@ -187,10 +187,16 @@ function App() {
   }, [isLoaded, soundEnabled, muted]);
 
   // Conexão WebSocket com reconexão automática (backoff exponencial)
+  // Desabilitado quando não há servidor backend (ex: GitHub Pages estático)
   useEffect(() => {
     let reconnectAttempts = 0;
+    const MAX_WS_RECONNECT = 3; // Stop after 3 attempts to avoid spamming errors
 
     function connectWs() {
+      if (reconnectAttempts >= MAX_WS_RECONNECT) {
+        setWsStatus("offline");
+        return;
+      }
       wsRef.current?.close();
       const url = getWsUrl();
       setWsStatus("conectando...");
@@ -244,13 +250,17 @@ function App() {
         setIsPttHolding(false);
         setIsTokenBusy(false);
         reconnectAttempts++;
+        if (reconnectAttempts >= MAX_WS_RECONNECT) {
+          setWsStatus("offline");
+          return;
+        }
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
         wsReconnectDelayRef.current = delay;
         wsReconnectTimerRef.current = window.setTimeout(connectWs, delay);
       };
 
       ws.onerror = () => {
-        ws.close();
+        // Don't call ws.close() here — onclose will fire and handle reconnect
       };
     }
 
