@@ -28,7 +28,7 @@ export function useSpeechRecognition(
   const hasNetworkErrorRef = useRef(false);
   const retryTimeoutRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 15;
   const isReconnectingRef = useRef(false);
 
   const onResultRef = useRef(onResult);
@@ -65,6 +65,7 @@ export function useSpeechRecognition(
       console.log("✓ Reconhecimento iniciado");
       hasNetworkErrorRef.current = false;
       isReconnectingRef.current = false;
+      retryCountRef.current = 0;
       setError(null);
       onStatusChangeRef.current?.("listening");
     };
@@ -176,25 +177,37 @@ export function useSpeechRecognition(
       if (event.error === "network") {
         retryCountRef.current += 1;
         if (retryCountRef.current <= MAX_RETRIES) {
-          const delay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 8000);
-          setError(`Reconhecimento de voz temporariamente indisponível. Tentando novamente em ${delay / 1000}s... (${retryCountRef.current}/${MAX_RETRIES})`);
+          // Exponential backoff: 2s, 4s, 8s... up to 30s
+          const delay = Math.min(2000 * Math.pow(2, retryCountRef.current - 1), 30000);
+          setError(`Rede instável. Reconectando em ${Math.round(delay / 1000)}s... (${retryCountRef.current}/${MAX_RETRIES})`);
           try { recognition.abort(); } catch { /* ignorar */ }
           isListeningRef.current = false;
           setIsListening(false);
           onStatusChangeRef.current?.("idle");
+          isReconnectingRef.current = true;
           retryTimeoutRef.current = window.setTimeout(() => {
             hasNetworkErrorRef.current = false;
+            isReconnectingRef.current = false;
             if (!isStoppingRef.current) {
-              isListeningRef.current = true;
-              setIsListening(true);
-              setError(null);
-              onStatusChangeRef.current?.("listening");
-              try { recognition.start(); } catch { /* ignorar */ }
+              // Create a fresh recognition instance for network retries
+              try { recognition.abort(); } catch { /* ignorar */ }
+              const newRecog = createRecognition();
+              if (newRecog) {
+                recognitionRef.current = newRecog;
+                isListeningRef.current = true;
+                setIsListening(true);
+                setError(null);
+                onStatusChangeRef.current?.("listening");
+                try { newRecog.start(); } catch { /* ignorar */ }
+              } else {
+                setError("Não foi possível reconectar o reconhecimento de voz.");
+                onStatusChangeRef.current?.("error");
+              }
             }
           }, delay);
         } else {
           hasNetworkErrorRef.current = true;
-          setError("Reconhecimento de voz indisponível após várias tentativas. Verifique sua conexão e tente novamente.");
+          setError("Reconhecimento de voz indisponível após várias tentativas. Verifique sua conexão e recarregue a página.");
           onErrorRef.current?.("Reconhecimento de voz indisponível");
           onStatusChangeRef.current?.("error");
           isListeningRef.current = false;

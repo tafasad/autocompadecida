@@ -7,29 +7,11 @@ import type { ScriptLine } from "@/lib/types";
 import { defaultLines, makeId, now, DEFAULT_TRIGGER } from "@/lib/types";
 import { similarityPercent, wordOverlap, normalizeText } from "@/lib/similarity";
 import { playSyntheticLaugh, playFallbackBeep } from "@/lib/audio";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import LineList from "@/components/LineList";
 import LineEditor from "@/components/LineEditor";
 import StatusPanel from "@/components/StatusPanel";
 import ToggleSidebar from "@/components/ToggleSidebar";
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
-};
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  }
-}
 
 function App() {
   const { user, isAdmin, logout, loading } = useAuth();
@@ -56,7 +38,6 @@ function App() {
   const [transcript, setTranscript] = useState(""); // última frase reconhecida pelo microfone
   const [status, setStatus] = useState("Carregando roteiro salvo...");
   const [isLoaded, setIsLoaded] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [lastMatch, setLastMatch] = useState<{ line: ScriptLine; score: number } | null>(null);
   const [error, setError] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -73,8 +54,6 @@ function App() {
   const [wsStatus, setWsStatus] = useState("desconectado"); // status da conexão WebSocket
 
   // === Refs para controle de áudio e conexão ===
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null); // instância do SpeechRecognition
-  const manualStopRef = useRef(false); // se o usuário parou manualmente o microfone
   const cooldownRef = useRef<Record<string, number>>({}); // controle de cooldown entre disparos
   const lastTranscriptRef = useRef(""); // última transcrição processada para evitar repetição
   const currentAudioRef = useRef<HTMLAudioElement | null>(null); // áudio em reprodução (arquivo)
@@ -83,6 +62,42 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null); // conexão WebSocket
   const wsReconnectTimerRef = useRef<number | null>(null); // timer para reconexão
   const wsReconnectDelayRef = useRef(1000); // delay inicial de reconexão (backoff exponencial)
+
+  // === Hook de reconhecimento de voz (trata retry, network, etc.) ===
+  const micTranscriptRef = useRef("");
+  const {
+    isListening,
+    isSupported: isMicSupported,
+    error: micError,
+    setError: setMicError,
+    start: startMic,
+    stop: stopMic,
+  } = useSpeechRecognition({
+    language: "pt-BR",
+    continuous: true,
+    interimResults: true,
+    onResult: (text: string, isFinal: boolean) => {
+      const visibleText = text.trim();
+      if (visibleText) {
+        micTranscriptRef.current = visibleText;
+        setTranscript(visibleText);
+      }
+      if (isFinal) {
+        lastTranscriptRef.current = "";
+        checkTranscript(visibleText);
+      }
+    },
+    onError: (err: string) => {
+      setError(`Microfone: ${err}`);
+    },
+    onStatusChange: (micStatus: "idle" | "listening" | "error") => {
+      if (micStatus === "listening") {
+        setStatus("Microfone ligado. Fale uma frase cadastrada para disparar o efeito sonoro.");
+      } else if (micStatus === "error") {
+        // Error already handled by onError
+      }
+    },
+  });
 
   // Para todo áudio em reprodução: arquivo, sintético, mídia no DOM e PTT
   const stopAllAudio = () => {
@@ -275,11 +290,10 @@ function App() {
     };
   }, []);
 
-  // Cleanup ao desmontar: para áudio, microfone e libera URLs de blob
+  // Cleanup ao desmontar: para áudio e libera URLs de blob
   useEffect(() => {
     return () => {
       currentAudioRef.current?.pause();
-      recognitionRef.current?.abort();
       pttStreamRef.current?.getTracks().forEach((t) => t.stop());
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current = [];
@@ -506,109 +520,6 @@ function App() {
     playEffect(best.line);
   };
 
-  // === Reconhecimento de voz ===
-
-  // Inicia a escuta contínua do microfone (Web Speech API)
-  const startListening = () => {
-    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Recognition) {
-      setError("Este navegador não suporta reconhecimento de voz. Use Chrome, Edge ou outro navegador compatível.");
-      return;
-    }
-
-    setError("");
-    manualStopRef.current = false;
-    const recognition = new Recognition();
-    recognition.lang = "pt-BR";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    // Processa o resultado do reconhecimento de fala
-    recognition.onresult = (event: any) => {
-      let finalText = "";
-      let interimText = "";
-
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const value = event.results[index][0]?.transcript ?? "";
-        if (event.results[index].isFinal) finalText += ` ${value}`;
-        else interimText += ` ${value}`;
-      }
-
-      const visibleText = `${finalText} ${interimText}`.trim();
-      if (visibleText) setTranscript(visibleText);
-      if (finalText.trim()) {
-        lastTranscriptRef.current = "";
-        checkTranscript(finalText.trim());
-      }
-    };
-
-    let retryCount = 0;
-    const MAX_RETRIES = 5;
-
-    recognition.onerror = (event: any) => {
-      if (event.error === "aborted" || event.error === "no-speech") return;
-      if (manualStopRef.current) return;
-
-      if (event.error === "network") {
-        retryCount += 1;
-        if (retryCount <= MAX_RETRIES) {
-          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 8000);
-          setStatus(`Conexão do microfone instável. Tentando novamente em ${delay / 1000}s... (${retryCount}/${MAX_RETRIES})`);
-          setIsListening(false);
-          setTimeout(() => {
-            if (!manualStopRef.current) {
-              try {
-                recognition.abort();
-              } catch { /* ignorar */ }
-              try {
-                recognition.start();
-                setIsListening(true);
-                setStatus("Microfone ligado. Fale uma frase cadastrada para disparar o efeito sonoro.");
-              } catch { /* ignorar */ }
-            }
-          }, delay);
-          return;
-        }
-        setError("Reconhecimento de voz indisponível após várias tentativas. Verifique sua conexão e recarregue a página.");
-        setIsListening(false);
-        return;
-      }
-
-      setError(`Erro no microfone/reconhecimento: ${event.error ?? "desconhecido"}.`);
-      setIsListening(false);
-    };
-
-    // Reconecta automaticamente se o reconhecimento cair (a menos que parado manualmente)
-    recognition.onend = () => {
-      setIsListening(false);
-      if (!manualStopRef.current) {
-        try {
-          recognition.start();
-          setIsListening(true);
-        } catch {
-          // Alguns navegadores impedem reinício imediato; o usuário pode clicar de novo.
-        }
-      }
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setIsListening(true);
-      setStatus("Microfone ligado. Fale uma frase cadastrada para disparar o efeito sonoro.");
-    } catch {
-      setError("Não consegui ligar o microfone. Confira a permissão do navegador e tente novamente.");
-    }
-  };
-
-  // Para o reconhecimento de voz manualmente
-  const stopListening = () => {
-    manualStopRef.current = true;
-    recognitionRef.current?.stop();
-    setIsListening(false);
-    setStatus("Microfone desligado.");
-  };
-
   // === Upload e exportação ===
 
   // Anexa um arquivo de áudio/vídeo à fala selecionada
@@ -718,7 +629,7 @@ function App() {
         threshold={threshold}
         onThresholdChange={setThreshold}
         isListening={isListening}
-        onToggleMic={isListening ? stopListening : startListening}
+        onToggleMic={isListening ? stopMic : startMic}
         soundEnabled={soundEnabled}
         onToggleSound={() => { setSoundEnabled((v) => !v); if (soundEnabled) stopAllAudio(); }}
         presets={presets}
