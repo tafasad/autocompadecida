@@ -6,7 +6,7 @@ import { saveAppState, loadAppState, savePreset, getPresets, deletePreset, type 
 import type { ScriptLine } from "@/lib/types";
 import { defaultLines, makeId, now, DEFAULT_TRIGGER } from "@/lib/types";
 import { similarityPercent, wordOverlap, normalizeText } from "@/lib/similarity";
-import { playSyntheticLaugh, playFallbackBeep } from "@/lib/audio";
+import { playSyntheticLaugh, playFallbackBeep, unlockAudio } from "@/lib/audio";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import LineList from "@/components/LineList";
 import LineEditor from "@/components/LineEditor";
@@ -178,6 +178,17 @@ function App() {
     };
   }, [user.username]);
 
+  // Unlock audio on first user interaction (required by mobile browsers)
+  useEffect(() => {
+    const unlock = () => {
+      unlockAudio();
+      document.removeEventListener("touchstart", unlock);
+      document.removeEventListener("click", unlock);
+    };
+    document.addEventListener("touchstart", unlock, { once: true, passive: true });
+    document.addEventListener("click", unlock, { once: true });
+  }, []);
+
   // Auto-save: salva no IndexedDB após 350ms de inatividade (debounce)
   useEffect(() => {
     if (!isLoaded) return;
@@ -206,6 +217,17 @@ function App() {
   useEffect(() => {
     let reconnectAttempts = 0;
     const MAX_WS_RECONNECT = 3; // Stop after 3 attempts to avoid spamming errors
+
+    // Detect if we're on a static host (GitHub Pages, etc.) — no WS backend available
+    const isStaticHost = location.hostname.includes("github.io") ||
+      location.hostname.includes("pages.dev") ||
+      location.hostname.includes("netlify.app") ||
+      location.hostname.includes("vercel.app");
+
+    if (isStaticHost) {
+      setWsStatus("offline");
+      return;
+    }
 
     function connectWs() {
       if (reconnectAttempts >= MAX_WS_RECONNECT) {
@@ -461,6 +483,9 @@ function App() {
     if (!soundEnabled || muted) return;
     stopAllAudio(); // Garante que só UM áudio toque por vez
 
+    // Unlock audio on mobile — must happen inside user gesture
+    unlockAudio();
+
     if (line.audioBlob) {
       const url = URL.createObjectURL(line.audioBlob);
       blobUrlsRef.current.push(url);
@@ -475,7 +500,16 @@ function App() {
         currentAudioRef.current = null;
         setError("Não consegui tocar esse arquivo de áudio. Tente outro arquivo de efeito sonoro.");
       };
-      audio.play().catch(() => setError("O navegador bloqueou o áudio. Clique em testar efeito ou ligue o microfone novamente."));
+      const playPromise = audio.play();
+      if (playPromise) {
+        playPromise.catch((err: any) => {
+          if (err?.name === "NotAllowedError") {
+            setError("O navegador bloqueou o áudio. Toque na tela ou clique em 'Testar efeito' novamente.");
+          } else {
+            setError("O navegador bloqueou o áudio. Clique em testar efeito ou ligue o microfone novamente.");
+          }
+        });
+      }
       return;
     }
 

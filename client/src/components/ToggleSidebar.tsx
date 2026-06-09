@@ -134,12 +134,13 @@ export default function ToggleSidebar({
 
             {isAdmin && (
               <Button
-                onMouseDown={onStartPtt}
-                onMouseUp={onStopPtt}
-                onMouseLeave={onStopPtt}
-                onTouchStart={onStartPtt}
-                onTouchEnd={onStopPtt}
-                className={`w-full h-9 text-sm font-bold rounded-xl ${
+                onMouseDown={(e) => { e.preventDefault(); onStartPtt(); }}
+                onMouseUp={(e) => { e.preventDefault(); onStopPtt(); }}
+                onMouseLeave={(e) => { e.preventDefault(); onStopPtt(); }}
+                onTouchStart={(e) => { e.preventDefault(); onStartPtt(); }}
+                onTouchEnd={(e) => { e.preventDefault(); onStopPtt(); }}
+                onTouchCancel={(e) => { e.preventDefault(); onStopPtt(); }}
+                className={`w-full h-9 text-sm font-bold rounded-xl select-none touch-none ${
                   isPttHolding
                     ? "bg-red-500/30 text-red-300 border border-red-500/50"
                     : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"

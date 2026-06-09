@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { SpeechRecognitionLike } from "@/lib/types";
+import { unlockAudio } from "@/lib/audio";
 
 interface UseSpeechRecognitionOptions {
   language?: string;
@@ -29,7 +30,7 @@ export function useSpeechRecognition(
   const retryTimeoutRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const isStartingRef = useRef(false);
-  const MAX_RETRIES = 15;
+  const MAX_RETRIES = 5; // Reduced for mobile — aggressive retries cause hangs
   const isReconnectingRef = useRef(false);
 
   const onResultRef = useRef(onResult);
@@ -298,6 +299,9 @@ export function useSpeechRecognition(
       console.log("Start já em progresso, ignorando...");
       return;
     }
+
+    // Unlock audio on mobile when user activates mic (inside user gesture)
+    unlockAudio();
 
     try {
       isStoppingRef.current = false;
