@@ -28,6 +28,7 @@ export function useSpeechRecognition(
   const hasNetworkErrorRef = useRef(false);
   const retryTimeoutRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
+  const isStartingRef = useRef(false);
   const MAX_RETRIES = 15;
   const isReconnectingRef = useRef(false);
 
@@ -65,6 +66,7 @@ export function useSpeechRecognition(
       console.log("✓ Reconhecimento iniciado");
       hasNetworkErrorRef.current = false;
       isReconnectingRef.current = false;
+      isStartingRef.current = false;
       retryCountRef.current = 0;
       setError(null);
       onStatusChangeRef.current?.("listening");
@@ -92,6 +94,8 @@ export function useSpeechRecognition(
     recognition.onend = () => {
       console.log("✓ Reconhecimento finalizado");
 
+      // Only auto-restart if we're still supposed to be listening
+      // and this wasn't caused by an abort/stop
       if (
         isListeningRef.current &&
         !isStoppingRef.current &&
@@ -104,15 +108,16 @@ export function useSpeechRecognition(
               recognition.start();
             } catch (err: any) {
               console.warn("Falha ao reiniciar recognition:", err?.message);
+              // If start fails, try abort + fresh start after a longer delay
               try { recognition.abort(); } catch { /* ignorar */ }
               setTimeout(() => {
                 if (isListeningRef.current && !isStoppingRef.current) {
                   try { recognition.start(); } catch { /* ignorar */ }
                 }
-              }, 300);
+              }, 500);
             }
           }
-        }, 500);
+        }, 800);
       }
     };
 
@@ -288,10 +293,17 @@ export function useSpeechRecognition(
       recognitionRef.current = newRecog;
     }
 
+    // Prevent double-start which causes "aborted" error
+    if (isStartingRef.current) {
+      console.log("Start já em progresso, ignorando...");
+      return;
+    }
+
     try {
       isStoppingRef.current = false;
       hasNetworkErrorRef.current = false;
       isReconnectingRef.current = false;
+      isStartingRef.current = true;
       retryCountRef.current = 0;
 
       isListeningRef.current = true;
@@ -307,12 +319,16 @@ export function useSpeechRecognition(
           err.name === "InvalidStateError"
         ) {
           console.log("Reconhecimento já está ativo");
+          isStartingRef.current = false;
         } else {
           throw err;
         }
       }
     } catch (err: any) {
       console.error("Erro ao iniciar reconhecimento:", err);
+      isStartingRef.current = false;
+      isListeningRef.current = false;
+      setIsListening(false);
 
       const msg =
         err.name === "NotAllowedError"
@@ -322,8 +338,6 @@ export function useSpeechRecognition(
             : "Erro ao acessar o microfone";
 
       setError(msg);
-      isListeningRef.current = false;
-      setIsListening(false);
       onStatusChangeRef.current?.("error");
     }
   }, [createRecognition]);
