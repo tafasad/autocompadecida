@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { SpeechRecognitionLike } from "@/lib/types";
 
 interface UseSpeechRecognitionOptions {
   language?: string;
@@ -9,6 +8,15 @@ interface UseSpeechRecognitionOptions {
   onError?: (error: string) => void;
   onStatusChange?: (status: "idle" | "listening" | "error") => void;
 }
+
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+}
+
+type Status = "idle" | "listening" | "error";
 
 export function useSpeechRecognition(
   options: UseSpeechRecognitionOptions = {}
@@ -25,368 +33,314 @@ export function useSpeechRecognition(
   const recognitionRef = useRef<any>(null);
   const isListeningRef = useRef(false);
   const isStoppingRef = useRef(false);
-  const hasNetworkErrorRef = useRef(false);
-  const retryTimeoutRef = useRef<number | null>(null);
-  const retryCountRef = useRef(0);
   const isStartingRef = useRef(false);
-  const MAX_RETRIES = 15;
-  const isReconnectingRef = useRef(false);
+  const restartTimeoutRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 10;
+  const isMobile = useRef(isMobileDevice());
 
   const onResultRef = useRef(onResult);
   const onErrorRef = useRef(onError);
   const onStatusChangeRef = useRef(onStatusChange);
-  useEffect(() => {
-    onResultRef.current = onResult;
-  }, [onResult]);
-  useEffect(() => {
-    onErrorRef.current = onError;
-  }, [onError]);
-  useEffect(() => {
-    onStatusChangeRef.current = onStatusChange;
-  }, [onStatusChange]);
+  useEffect(() => { onResultRef.current = onResult; }, [onResult]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
 
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Helper: create a fresh recognition instance with all handlers wired up
-  const createRecognition = useCallback(() => {
-    const SpeechRecognition =
+  const clearTimers = useCallback(() => {
+    if (restartTimeoutRef.current !== null) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+  }, []);
+
+  const notifyStatus = useCallback((s: Status) => {
+    onStatusChangeRef.current?.(s);
+  }, []);
+
+  // --- Create a fresh SpeechRecognition instance ---
+  const createInstance = useCallback((): any => {
+    const Ctor =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
+    if (!Ctor) return null;
 
-    if (!SpeechRecognition) return null;
+    const rec = new Ctor();
+    // Mobile doesn't handle continuous well — use single-shot + manual restart
+    rec.continuous = isMobile.current ? false : continuous;
+    rec.interimResults = isMobile.current ? false : interimResults;
+    rec.lang = language;
+    rec.maxAlternatives = 1;
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = continuous;
-    recognition.interimResults = interimResults;
-    recognition.lang = language;
-
-    recognition.onstart = () => {
-      console.log("✓ Reconhecimento iniciado");
-      hasNetworkErrorRef.current = false;
-      isReconnectingRef.current = false;
+    rec.onstart = () => {
+      console.log("✓ recognition started");
       isStartingRef.current = false;
       retryCountRef.current = 0;
       setError(null);
-      onStatusChangeRef.current?.("listening");
+      notifyStatus("listening");
     };
 
-    recognition.onresult = (event: any) => {
-      let interimTranscript = "";
-      let finalTranscript = "";
-
+    rec.onresult = (event: any) => {
+      let finalText = "";
+      let interimText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const text = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += text + " ";
-        } else {
-          interimTranscript += text;
-        }
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += t + " ";
+        else interimText += t;
       }
+      const out = (finalText || interimText).trim();
+      if (out) onResultRef.current?.(out, !!finalText);
 
-      const current = (finalTranscript || interimTranscript).trim();
-      if (current) {
-        onResultRef.current?.(current, !!finalTranscript);
+      // Mobile: continuous=false, so restart after a final result
+      if (isMobile.current && finalText.trim()) {
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          if (isListeningRef.current && !isStoppingRef.current) freshStart();
+        }, 300);
       }
     };
 
-    recognition.onend = () => {
-      console.log("✓ Reconhecimento finalizado");
-
-      // Only auto-restart if we're still supposed to be listening
-      // and this wasn't caused by an abort/stop
+    rec.onend = () => {
+      console.log("✓ recognition ended");
+      // Desktop auto-restart (handles edge drops)
       if (
         isListeningRef.current &&
         !isStoppingRef.current &&
-        !hasNetworkErrorRef.current &&
-        !isReconnectingRef.current
+        !isStartingRef.current &&
+        !isMobile.current
       ) {
-        setTimeout(() => {
-          if (isListeningRef.current && !isStoppingRef.current) {
-            try {
-              recognition.start();
-            } catch (err: any) {
-              console.warn("Falha ao reiniciar recognition:", err?.message);
-              // If start fails, try abort + fresh start after a longer delay
-              try { recognition.abort(); } catch { /* ignorar */ }
-              setTimeout(() => {
-                if (isListeningRef.current && !isStoppingRef.current) {
-                  try { recognition.start(); } catch { /* ignorar */ }
-                }
-              }, 500);
-            }
-          }
-        }, 800);
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          if (isListeningRef.current && !isStoppingRef.current) doRestart();
+        }, 500);
       }
     };
 
-    recognition.onerror = (event: any) => {
-      if (event.error === "aborted") return;
+    rec.onerror = (event: any) => {
+      const err = event.error as string;
+      console.error("speech error:", err);
       if (isStoppingRef.current) return;
 
-      console.error("Erro de reconhecimento:", event.error);
+      isStartingRef.current = false;
 
-      // "no-speech" é comum quando o usuário fica em silêncio — não tratar como erro
-      if (event.error === "no-speech") {
-        console.log("Nenhuma fala detectada, mantendo escuta...");
+      if (err === "aborted") {
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          if (isListeningRef.current && !isStoppingRef.current) doRestart();
+        }, 400);
         return;
       }
 
-      // "audio-capture" significa que o microfone foi desconectado ou bloqueado
-      // BUG FIX: recriar o recognition do zero em vez de reutilizar a instância corrompida
-      if (event.error === "audio-capture") {
-        console.error("Microfone perdido, recriando recognition e tentando reconectar...");
-        isListeningRef.current = false;
-        setIsListening(false);
-        onStatusChangeRef.current?.("error");
-        setError("Microfone desconectado ou bloqueado. Tentando reconectar...");
-        onErrorRef.current?.("Microfone desconectado");
+      if (err === "no-speech") return;
 
+      if (err === "audio-capture") {
+        setError("Microfone perdido. Reconectando...");
+        notifyStatus("error");
+        onErrorRef.current?.("Microfone desconectado");
         retryCountRef.current += 1;
         if (retryCountRef.current <= MAX_RETRIES) {
-          // Abort e descarta a instância atual
-          try { recognition.abort(); } catch { /* ignorar */ }
-          recognitionRef.current = null;
-
-          isReconnectingRef.current = true;
-          retryTimeoutRef.current = window.setTimeout(() => {
-            hasNetworkErrorRef.current = false;
-            if (!isStoppingRef.current) {
-              // Cria uma nova instância do recognition
-              const newRecog = createRecognition();
-              if (newRecog) {
-                recognitionRef.current = newRecog;
-                isListeningRef.current = true;
-                setIsListening(true);
-                setError(null);
-                onStatusChangeRef.current?.("listening");
-                isReconnectingRef.current = false;
-                try { newRecog.start(); } catch { /* ignorar */ }
-              } else {
-                isReconnectingRef.current = false;
-                setError("Não foi possível recriar o reconhecimento de voz.");
-                onStatusChangeRef.current?.("error");
-              }
-            } else {
-              isReconnectingRef.current = false;
-            }
-          }, 2000);
+          clearTimers();
+          restartTimeoutRef.current = window.setTimeout(() => {
+            if (isListeningRef.current && !isStoppingRef.current) freshStart();
+          }, 1500);
         } else {
-          setError("Microfone indisponível após várias tentativas. Recarregue a página.");
-          onStatusChangeRef.current?.("error");
+          setError("Microfone indisponível. Recarregue.");
+          isListeningRef.current = false;
+          setIsListening(false);
         }
         return;
       }
 
-      if (event.error === "network") {
+      if (err === "network") {
         retryCountRef.current += 1;
         if (retryCountRef.current <= MAX_RETRIES) {
-          // Exponential backoff: 2s, 4s, 8s... up to 30s
-          const delay = Math.min(2000 * Math.pow(2, retryCountRef.current - 1), 30000);
-          setError(`Rede instável. Reconectando em ${Math.round(delay / 1000)}s... (${retryCountRef.current}/${MAX_RETRIES})`);
-          try { recognition.abort(); } catch { /* ignorar */ }
-          isListeningRef.current = false;
-          setIsListening(false);
-          onStatusChangeRef.current?.("idle");
-          isReconnectingRef.current = true;
-          retryTimeoutRef.current = window.setTimeout(() => {
-            hasNetworkErrorRef.current = false;
-            isReconnectingRef.current = false;
-            if (!isStoppingRef.current) {
-              // Create a fresh recognition instance for network retries
-              try { recognition.abort(); } catch { /* ignorar */ }
-              const newRecog = createRecognition();
-              if (newRecog) {
-                recognitionRef.current = newRecog;
-                isListeningRef.current = true;
-                setIsListening(true);
-                setError(null);
-                onStatusChangeRef.current?.("listening");
-                try { newRecog.start(); } catch { /* ignorar */ }
-              } else {
-                setError("Não foi possível reconectar o reconhecimento de voz.");
-                onStatusChangeRef.current?.("error");
-              }
-            }
+          const delay = isMobile.current
+            ? Math.min(1000 * retryCountRef.current, 5000)
+            : Math.min(1500 * Math.pow(2, retryCountRef.current - 1), 15000);
+          setError(`Rede instável. Tentando em ${Math.round(delay / 1000)}s…`);
+          clearTimers();
+          restartTimeoutRef.current = window.setTimeout(() => {
+            if (isListeningRef.current && !isStoppingRef.current) freshStart();
           }, delay);
         } else {
-          hasNetworkErrorRef.current = true;
-          setError("Reconhecimento de voz indisponível após várias tentativas. Verifique sua conexão e recarregue a página.");
-          onErrorRef.current?.("Reconhecimento de voz indisponível");
-          onStatusChangeRef.current?.("error");
+          setError("Sem conexão. Verifique a internet e recarregue.");
           isListeningRef.current = false;
           setIsListening(false);
+          notifyStatus("error");
         }
         return;
       }
 
-      const messages: Record<string, string> = {
-        "not-allowed":
-          "Permissão de microfone negada. Verifique as configurações do navegador.",
-        "service-not-allowed": "Serviço de reconhecimento não disponível.",
-      };
+      if (err === "not-allowed") {
+        const msg = "Permissão de microfone negada. Veja as configurações do navegador.";
+        setError(msg);
+        onErrorRef.current?.(msg);
+        notifyStatus("error");
+        isListeningRef.current = false;
+        setIsListening(false);
+        return;
+      }
 
-      const msg = messages[event.error] ?? `Erro: ${event.error}`;
+      // Any other error — try to recover
+      const msg = `Erro: ${err}`;
       setError(msg);
       onErrorRef.current?.(msg);
-      onStatusChangeRef.current?.("error");
-      isListeningRef.current = false;
-      setIsListening(false);
+      notifyStatus("error");
+      retryCountRef.current += 1;
+      if (retryCountRef.current <= MAX_RETRIES) {
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          if (isListeningRef.current && !isStoppingRef.current) freshStart();
+        }, 1000);
+      }
     };
 
-    return recognition;
-  }, [language, continuous, interimResults]);
+    return rec;
+  }, [
+    language, continuous, interimResults,
+    clearTimers, notifyStatus,
+    isListeningRef, isStoppingRef, isStartingRef,
+  ]);
 
-  useEffect(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setIsSupported(false);
-      setError(
-        "Seu navegador não suporta reconhecimento de voz. Use Chrome, Edge ou Safari."
-      );
-      onStatusChangeRef.current?.("error");
+  // --- Stop old + create new + start ---
+  const freshStart = useCallback(() => {
+    const old = recognitionRef.current;
+    if (old) {
+      try {
+        old.onresult = old.onerror = old.onstart = old.onend = null;
+        old.abort();
+      } catch { /* ignore */ }
+    }
+    const rec = createInstance();
+    if (!rec) {
+      setError("Reconhecimento não suportado.");
+      isListeningRef.current = false;
+      setIsListening(false);
       return;
     }
-
-    setIsSupported(true);
-
-    try {
-      const recognition = createRecognition();
-      if (recognition) {
-        recognitionRef.current = recognition;
+    recognitionRef.current = rec;
+    if (isListeningRef.current && !isStoppingRef.current && !isStartingRef.current) {
+      isStartingRef.current = true;
+      try {
+        rec.start();
+      } catch (e: any) {
+        console.warn("freshStart failed:", e?.message);
+        isStartingRef.current = false;
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          if (isListeningRef.current && !isStoppingRef.current) freshStart();
+        }, 800);
       }
-    } catch (err) {
-      console.error("Erro ao inicializar Speech Recognition:", err);
-      setIsSupported(false);
-      setError("Erro ao inicializar reconhecimento de voz");
-      onStatusChangeRef.current?.("error");
     }
+  }, [createInstance, clearTimers]);
+
+  // --- Restart the same instance ---
+  const doRestart = useCallback(() => {
+    const rec = recognitionRef.current;
+    if (!rec) { freshStart(); return; }
+    try {
+      rec.stop();
+      setTimeout(() => {
+        if (isListeningRef.current && !isStoppingRef.current) {
+          try { rec.start(); } catch { freshStart(); }
+        }
+      }, 100);
+    } catch { freshStart(); }
+  }, [freshStart]);
+
+  // --- Mount: detect support + create initial instance ---
+  // `freshStart` is declared above via useCallback, so it's usable here
+  // through closure. Add missing deps.
+  // `isListening`` — not a dep
+  void isListening; // suppress unused warning
+
+  useEffect(() => {
+    const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!Ctor) {
+      setIsSupported(false);
+      setError("Use Chrome ou Edge para reconhecimento de voz.");
+      notifyStatus("error");
+      return;
+    }
+    setIsSupported(true);
+    isMobile.current = isMobileDevice();
+    console.log("speech init, mobile:", isMobile.current);
+    const rec = createInstance();
+    if (rec) recognitionRef.current = rec;
 
     return () => {
       isStoppingRef.current = true;
-      if (retryTimeoutRef.current !== null) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
-      }
+      isListeningRef.current = false;
+      clearTimers();
       try {
-        recognitionRef.current?.abort();
-      } catch {
-        /* ignorar */
-      }
+        const r = recognitionRef.current;
+        if (r) { r.onresult = r.onerror = r.onstart = r.onend = null; r.abort(); }
+      } catch { /* ignore */ }
+      recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = useCallback(async () => {
+  // --- Public API ---
+  const start = useCallback(() => {
     if (!recognitionRef.current) {
-      // Tenta recriar se não existir
-      const newRecog = createRecognition();
-      if (!newRecog) {
-        setError("Reconhecimento de voz não suportado");
-        onStatusChangeRef.current?.("error");
+      const rec = createInstance();
+      if (!rec) {
+        setError("Reconhecimento de voz não suportado.");
+        notifyStatus("error");
         return;
       }
-      recognitionRef.current = newRecog;
+      recognitionRef.current = rec;
     }
-
-    // Prevent double-start which causes "aborted" error
-    if (isStartingRef.current) {
-      console.log("Start já em progresso, ignorando...");
-      return;
-    }
-
+    if (isStartingRef.current) return;
+    clearTimers();
+    isStoppingRef.current = false;
+    isStartingRef.current = true;
+    isListeningRef.current = true;
+    retryCountRef.current = 0;
+    setIsListening(true);
+    setError(null);
+    notifyStatus("listening");
     try {
-      isStoppingRef.current = false;
-      hasNetworkErrorRef.current = false;
-      isReconnectingRef.current = false;
-      isStartingRef.current = true;
-      retryCountRef.current = 0;
-
-      isListeningRef.current = true;
-      setIsListening(true);
-      setError(null);
-      onStatusChangeRef.current?.("listening");
-
-      try {
-        recognitionRef.current.start();
-      } catch (err: any) {
-        if (
-          err.message?.includes("already started") ||
-          err.name === "InvalidStateError"
-        ) {
-          console.log("Reconhecimento já está ativo");
-          isStartingRef.current = false;
-        } else {
-          throw err;
-        }
+      recognitionRef.current.start();
+    } catch (e: any) {
+      if (e.name === "InvalidStateError" || e.message?.includes("already started")) {
+        isStartingRef.current = false;
+      } else {
+        console.error("start error:", e);
+        isStartingRef.current = false;
+        clearTimers();
+        restartTimeoutRef.current = window.setTimeout(() => {
+          freshStart();
+        }, 500);
       }
-    } catch (err: any) {
-      console.error("Erro ao iniciar reconhecimento:", err);
-      isStartingRef.current = false;
-      isListeningRef.current = false;
-      setIsListening(false);
-
-      const msg =
-        err.name === "NotAllowedError"
-          ? "Permissão de microfone negada. Clique no ícone de microfone na barra de endereço."
-          : err.name === "NotFoundError"
-            ? "Nenhum microfone encontrado no seu dispositivo."
-            : "Erro ao acessar o microfone";
-
-      setError(msg);
-      onStatusChangeRef.current?.("error");
     }
-  }, [createRecognition]);
+  }, [createInstance, clearTimers, freshStart, notifyStatus]);
 
   const stop = useCallback(() => {
     isStoppingRef.current = true;
     isListeningRef.current = false;
-    isReconnectingRef.current = false;
-    if (retryTimeoutRef.current !== null) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      /* ignorar */
-    }
-
+    isStartingRef.current = false;
+    clearTimers();
+    try { recognitionRef.current?.stop(); } catch { /* ignore */ }
     setIsListening(false);
-    onStatusChangeRef.current?.("idle");
-
-    setTimeout(() => {
-      isStoppingRef.current = false;
-    }, 500);
-  }, []);
+    notifyStatus("idle");
+    setTimeout(() => { isStoppingRef.current = false; }, 500);
+  }, [clearTimers, notifyStatus]);
 
   const abort = useCallback(() => {
     isStoppingRef.current = true;
     isListeningRef.current = false;
-    isReconnectingRef.current = false;
-    if (retryTimeoutRef.current !== null) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-
-    try {
-      recognitionRef.current?.abort();
-    } catch {
-      /* ignorar */
-    }
-
+    isStartingRef.current = false;
+    clearTimers();
+    try { recognitionRef.current?.abort(); } catch { /* ignore */ }
     setIsListening(false);
-    onStatusChangeRef.current?.("idle");
-
-    setTimeout(() => {
-      isStoppingRef.current = false;
-    }, 500);
-  }, []);
+    notifyStatus("idle");
+    setTimeout(() => { isStoppingRef.current = false; }, 500);
+  }, [clearTimers, notifyStatus]);
 
   return { isListening, isSupported, error, setError, start, stop, abort };
 }
