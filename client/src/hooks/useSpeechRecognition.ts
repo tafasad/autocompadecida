@@ -206,11 +206,16 @@ export function useSpeechRecognition(
       }
 
       if (event.error === "network") {
+        const offline = !navigator.onLine;
+        console.log(`[NETWORK ERROR] navigator.onLine=${offline ? 'OFFLINE' : 'ONLINE'}`);
         // Marca que houve erro de rede — onend fará o retry com nova instância
         hasNetworkErrorRef.current = true;
         try { recognition.abort(); } catch { /* ignorar */ }
         // isListeningRef continua true para que onend tente reconectar
         onStatusChangeRef.current?.("error");
+        if (offline) {
+          setError("Sem internet! Conecte-se a uma rede e tente novamente.");
+        }
         return;
       }
 
