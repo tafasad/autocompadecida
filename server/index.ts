@@ -4,7 +4,10 @@ import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { WebSocketServer, WebSocket } from "ws";
+import multer from "multer";
+import crypto from "crypto";
 import { WS_EVENTS, ADMIN_PASSWORD, type WsMessage } from "../shared/const.js";
+import { saveAudio, getAudio, deleteAudio, listAudio } from "./storage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,6 +147,57 @@ async function startServer() {
     } else {
       res.status(401).json({ success: false, message: "Invalid password" });
     }
+  });
+
+  // Configuração do multer para upload de áudio
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+  // Listar todos os áudios
+  app.get("/api/audio", (_req, res) => {
+    const items = listAudio();
+    res.json(items.map(item => ({ ...item, url: `/api/audio/${item.id}` })));
+  });
+
+  // Upload de áudio
+  app.post("/api/audio/upload", upload.single("audio"), (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "Nenhum arquivo enviado" });
+        return;
+      }
+      const id = crypto.randomUUID();
+      const meta = saveAudio(id, {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        buffer: req.file.buffer,
+      });
+      res.json({ ...meta, url: `/api/audio/${id}` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Download de áudio
+  app.get("/api/audio/:id", (req, res) => {
+    const result = getAudio(req.params.id);
+    if (!result) {
+      res.status(404).json({ error: "Áudio não encontrado" });
+      return;
+    }
+    res.setHeader("Content-Type", result.meta.mimetype);
+    res.setHeader("Content-Disposition", `inline; filename="${result.meta.name}"`);
+    res.sendFile(result.filePath);
+  });
+
+  // Deletar áudio
+  app.delete("/api/audio/:id", (req, res) => {
+    const ok = deleteAudio(req.params.id);
+    if (!ok) {
+      res.status(404).json({ error: "Áudio não encontrado" });
+      return;
+    }
+    res.json({ success: true });
   });
 
   // Fallback: serve o index.html para qualquer rota não reconhecida (SPA)

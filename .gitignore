@@ -105,5 +105,9 @@ temp/
 *.sqlite
 *.sqlite3
 
+# Audio storage (user-uploaded files)
+audio/*
+!audio/.gitkeep
+
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/

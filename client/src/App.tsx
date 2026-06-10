@@ -3,6 +3,7 @@ import { WS_EVENTS, getWsUrl, type WsMessage } from "@shared/const";
 import { useAuth } from "./contexts/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { saveAppState, loadAppState, savePreset, getPresets, deletePreset, type Preset } from "./lib/db";
+import { uploadAudio, deleteAudio as deleteServerAudio, listAudio, isServerAvailable, getAudioUrl } from "./lib/api";
 import type { ScriptLine } from "@/lib/types";
 import { defaultLines, makeId, now, DEFAULT_TRIGGER } from "@/lib/types";
 import { similarityPercent, wordOverlap, normalizeText } from "@/lib/similarity";
@@ -453,6 +454,9 @@ function App() {
   // Apaga a fala selecionada (mantém no mínimo 1)
   const deleteSelectedLine = () => {
     if (!selectedLine || lines.length === 1) return;
+    if (selectedLine.audioId && isServerAvailable()) {
+      deleteServerAudio(selectedLine.audioId).catch(() => {});
+    }
     const next = lines.filter((line) => line.id !== selectedLine.id);
     setLines(next);
     setSelectedLineId(next[0]?.id ?? "");
@@ -479,24 +483,38 @@ function App() {
   };
 
   // Toca o efeito sonoro de uma fala, parando qualquer áudio anterior primeiro
-  const playEffect = (line: ScriptLine) => {
+  const playEffect = async (line: ScriptLine) => {
     if (!soundEnabled || muted) return;
     stopAllAudio(); // Garante que só UM áudio toque por vez
 
     // Unlock audio on mobile — must happen inside user gesture
     unlockAudio();
 
-    if (line.audioBlob) {
+    let audioSource: string | null = null;
+
+    if (line.audioUrl && isServerAvailable()) {
+      audioSource = line.audioUrl;
+    } else if (line.audioId && isServerAvailable()) {
+      audioSource = getAudioUrl(line.audioId);
+    } else if (line.audioBlob) {
       const url = URL.createObjectURL(line.audioBlob);
       blobUrlsRef.current.push(url);
-      const audio = new Audio(url);
+      audioSource = url;
+    }
+
+    if (audioSource) {
+      const audio = new Audio(audioSource);
       currentAudioRef.current = audio;
       audio.onended = () => {
-        revokeBlobUrl(url);
+        if (line.audioBlob && audioSource.startsWith("blob:")) {
+          revokeBlobUrl(audioSource);
+        }
         currentAudioRef.current = null;
       };
       audio.onerror = () => {
-        revokeBlobUrl(url);
+        if (line.audioBlob && audioSource?.startsWith("blob:")) {
+          revokeBlobUrl(audioSource);
+        }
         currentAudioRef.current = null;
         setError("Não consegui tocar esse arquivo de áudio. Tente outro arquivo de efeito sonoro.");
       };
@@ -557,14 +575,29 @@ function App() {
   // === Upload e exportação ===
 
   // Anexa um arquivo de áudio/vídeo à fala selecionada
-  const handleFileUpload = (file?: File) => {
+  const handleFileUpload = async (file?: File) => {
     if (!file || !selectedLine) return;
-    updateSelectedLine({
+
+    const patch: Partial<ScriptLine> = {
       audioBlob: file,
       audioName: file.name,
       effectName: selectedLine.effectName || file.name.replace(/\.[^/.]+$/, ""),
-    });
-    setStatus(`Arquivo "${file.name}" anexado à fala selecionada.`);
+    };
+
+    if (isServerAvailable()) {
+      try {
+        const uploaded = await uploadAudio(file, file.name);
+        patch.audioId = uploaded.id;
+        patch.audioUrl = uploaded.url;
+        setStatus(`Arquivo "${file.name}" enviado para o servidor.`);
+      } catch (err: any) {
+        setStatus(`Arquivo "${file.name}" salvo localmente (servidor indisponível: ${err.message}).`);
+      }
+    } else {
+      setStatus(`Arquivo "${file.name}" anexado à fala selecionada (apenas local).`);
+    }
+
+    updateSelectedLine(patch);
   };
 
   // Exporta o roteiro como JSON (sem os blobs de áudio)

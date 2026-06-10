@@ -4,6 +4,8 @@ export type ScriptLine = {
   effectName: string;
   audioName?: string;
   audioBlob?: Blob;
+  audioId?: string;
+  audioUrl?: string;
   createdAt: number;
   updatedAt: number;
 };
