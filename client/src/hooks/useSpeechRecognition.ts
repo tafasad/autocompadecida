@@ -30,7 +30,7 @@ export function useSpeechRecognition(
   const retryTimeoutRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const isStartingRef = useRef(false);
-  const MAX_RETRIES = 5; // Reduced for mobile — aggressive retries cause hangs
+  const MAX_RETRIES = Infinity; // Retry infinito para erros de rede (transientes)
   const isReconnectingRef = useRef(false);
 
   const onResultRef = useRef(onResult);
@@ -95,30 +95,51 @@ export function useSpeechRecognition(
     recognition.onend = () => {
       console.log("✓ Reconhecimento finalizado");
 
-      // Only auto-restart if we're still supposed to be listening
-      // and this wasn't caused by an abort/stop
-      if (
-        isListeningRef.current &&
-        !isStoppingRef.current &&
-        !hasNetworkErrorRef.current &&
-        !isReconnectingRef.current
-      ) {
-        setTimeout(() => {
-          if (isListeningRef.current && !isStoppingRef.current) {
-            try {
-              recognition.start();
-            } catch (err: any) {
-              console.warn("Falha ao reiniciar recognition:", err?.message);
-              // If start fails, try abort + fresh start after a longer delay
-              try { recognition.abort(); } catch { /* ignorar */ }
-              setTimeout(() => {
-                if (isListeningRef.current && !isStoppingRef.current) {
-                  try { recognition.start(); } catch { /* ignorar */ }
-                }
-              }, 500);
+      if (isStoppingRef.current) return;
+
+      if (isListeningRef.current) {
+        setIsListening(false);
+
+        if (hasNetworkErrorRef.current) {
+          // Erro de rede: retry com nova instância e backoff exponencial
+          retryCountRef.current += 1;
+          const delay = Math.min(2000 * Math.pow(2, Math.min(retryCountRef.current - 1, 5)), 30000);
+          const msg = retryCountRef.current <= 1
+            ? "Reconectando serviço de voz..."
+            : `Rede instável. Tentando novamente em ${Math.round(delay / 1000)}s... (${retryCountRef.current})`;
+          setError(msg);
+          onStatusChangeRef.current?.("error");
+          hasNetworkErrorRef.current = false;
+
+          retryTimeoutRef.current = window.setTimeout(() => {
+            if (isStoppingRef.current) return;
+            const newRecog = createRecognition();
+            if (newRecog) {
+              recognitionRef.current = newRecog;
+              try { newRecog.start(); } catch (e: any) {
+                console.warn("Falha ao iniciar nova instância:", e?.message);
+                hasNetworkErrorRef.current = true;
+              }
             }
-          }
-        }, 800);
+          }, delay);
+        } else {
+          // Reinício normal (sem erro) — reconhecimento finalizou sozinho
+          setTimeout(() => {
+            if (isListeningRef.current && !isStoppingRef.current) {
+              try {
+                recognition.start();
+              } catch (err: any) {
+                console.warn("Falha ao reiniciar recognition:", err?.message);
+                try { recognition.abort(); } catch { /* ignorar */ }
+                setTimeout(() => {
+                  if (isListeningRef.current && !isStoppingRef.current) {
+                    try { recognition.start(); } catch { /* ignorar */ }
+                  }
+                }, 500);
+              }
+            }
+          }, 800);
+        }
       }
     };
 
@@ -181,44 +202,11 @@ export function useSpeechRecognition(
       }
 
       if (event.error === "network") {
-        retryCountRef.current += 1;
-        if (retryCountRef.current <= MAX_RETRIES) {
-          // Exponential backoff: 2s, 4s, 8s... up to 30s
-          const delay = Math.min(2000 * Math.pow(2, retryCountRef.current - 1), 30000);
-          setError(`Rede instável. Reconectando em ${Math.round(delay / 1000)}s... (${retryCountRef.current}/${MAX_RETRIES})`);
-          try { recognition.abort(); } catch { /* ignorar */ }
-          isListeningRef.current = false;
-          setIsListening(false);
-          onStatusChangeRef.current?.("idle");
-          isReconnectingRef.current = true;
-          retryTimeoutRef.current = window.setTimeout(() => {
-            hasNetworkErrorRef.current = false;
-            isReconnectingRef.current = false;
-            if (!isStoppingRef.current) {
-              // Create a fresh recognition instance for network retries
-              try { recognition.abort(); } catch { /* ignorar */ }
-              const newRecog = createRecognition();
-              if (newRecog) {
-                recognitionRef.current = newRecog;
-                isListeningRef.current = true;
-                setIsListening(true);
-                setError(null);
-                onStatusChangeRef.current?.("listening");
-                try { newRecog.start(); } catch { /* ignorar */ }
-              } else {
-                setError("Não foi possível reconectar o reconhecimento de voz.");
-                onStatusChangeRef.current?.("error");
-              }
-            }
-          }, delay);
-        } else {
-          hasNetworkErrorRef.current = true;
-          setError("Reconhecimento de voz indisponível após várias tentativas. Verifique sua conexão e recarregue a página.");
-          onErrorRef.current?.("Reconhecimento de voz indisponível");
-          onStatusChangeRef.current?.("error");
-          isListeningRef.current = false;
-          setIsListening(false);
-        }
+        // Marca que houve erro de rede — onend fará o retry com nova instância
+        hasNetworkErrorRef.current = true;
+        try { recognition.abort(); } catch { /* ignorar */ }
+        // isListeningRef continua true para que onend tente reconectar
+        onStatusChangeRef.current?.("error");
         return;
       }
 
