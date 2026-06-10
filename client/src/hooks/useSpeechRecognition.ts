@@ -100,6 +100,9 @@ export function useSpeechRecognition(
       if (isListeningRef.current) {
         setIsListening(false);
 
+        // Detect if we're on mobile for restart strategy
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
         if (hasNetworkErrorRef.current) {
           // Erro de rede: retry com nova instância e backoff exponencial
           retryCountRef.current += 1;
@@ -124,10 +127,22 @@ export function useSpeechRecognition(
           }, delay);
         } else {
           // Reinício normal (sem erro) — reconhecimento finalizou sozinho
+          // Mobile: restart rápido com nova instância; Desktop: reutilizar instância
+          const restartDelay = isMobile ? 100 : 800;
           setTimeout(() => {
             if (isListeningRef.current && !isStoppingRef.current) {
               try {
-                recognition.start();
+                if (isMobile) {
+                  // Mobile: create fresh instance for restart (avoids "aborted" errors)
+                  try { recognition.abort(); } catch { /* ignorar */ }
+                  const newRecog = createRecognition();
+                  if (newRecog) {
+                    recognitionRef.current = newRecog;
+                    newRecog.start();
+                  }
+                } else {
+                  recognition.start();
+                }
               } catch (err: any) {
                 console.warn("Falha ao reiniciar recognition:", err?.message);
                 try { recognition.abort(); } catch { /* ignorar */ }
@@ -138,7 +153,7 @@ export function useSpeechRecognition(
                 }, 500);
               }
             }
-          }, 800);
+          }, restartDelay);
         }
       }
     };
@@ -271,25 +286,41 @@ export function useSpeechRecognition(
   }, []);
 
   const start = useCallback(async () => {
-    if (!recognitionRef.current) {
-      // Tenta recriar se não existir
-      const newRecog = createRecognition();
-      if (!newRecog) {
-        setError("Reconhecimento de voz não suportado");
-        onStatusChangeRef.current?.("error");
-        return;
-      }
-      recognitionRef.current = newRecog;
+    // Unlock audio FIRST — must happen inside user gesture on mobile
+    unlockAudio();
+
+    // Check HTTPS requirement for mobile browsers
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isSecure = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    if (isMobile && !isSecure) {
+      setError("Microfone requer HTTPS no celular. Acesse o site com https://");
+      onStatusChangeRef.current?.("error");
+      return;
     }
 
-    // Prevent double-start which causes "aborted" error
+    // Check browser support
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setError("Seu navegador não suporta reconhecimento de voz. Use Chrome ou Safari.");
+      onStatusChangeRef.current?.("error");
+      return;
+    }
+
+    // Prevent double-start
     if (isStartingRef.current) {
       console.log("Start já em progresso, ignorando...");
       return;
     }
 
-    // Unlock audio on mobile when user activates mic (inside user gesture)
-    unlockAudio();
+    // If we have a recognition instance that's already listening, stop it first
+    if (isListeningRef.current) {
+      try { recognitionRef.current?.stop(); } catch { /* ignorar */ }
+      // Small delay to let it stop
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
 
     try {
       isStoppingRef.current = false;
@@ -298,13 +329,25 @@ export function useSpeechRecognition(
       isStartingRef.current = true;
       retryCountRef.current = 0;
 
+      // CRITICAL FOR MOBILE: Create a FRESH instance inside the user gesture
+      // Reusing old instances causes "aborted" errors on iOS/Android
+      try { recognitionRef.current?.abort(); } catch { /* ignorar */ }
+      const recognition = createRecognition();
+      if (!recognition) {
+        setError("Não foi possível criar o reconhecimento de voz.");
+        onStatusChangeRef.current?.("error");
+        isStartingRef.current = false;
+        return;
+      }
+      recognitionRef.current = recognition;
+
       isListeningRef.current = true;
       setIsListening(true);
       setError(null);
       onStatusChangeRef.current?.("listening");
 
       try {
-        recognitionRef.current.start();
+        recognition.start();
       } catch (err: any) {
         if (
           err.message?.includes("already started") ||

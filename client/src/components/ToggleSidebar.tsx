@@ -82,13 +82,18 @@ export default function ToggleSidebar({
             <h3 className="text-xs font-semibold tracking-widest text-[#00f0ff] uppercase">Microfone</h3>
             <Button
               onClick={onToggleMic}
-              className={`w-full h-9 text-sm font-bold rounded-xl ${
+              onTouchStart={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onToggleMic();
+              }}
+              className={`w-full h-12 text-sm font-bold rounded-xl select-none touch-manipulation ${
                 isListening
                   ? "bg-red-500/20 text-red-400 border border-red-500/40"
                   : "bg-[#00f0ff]/10 text-[#00f0ff] border border-[#00f0ff]/30"
               }`}
             >
-              {isListening ? "Parar mic" : "Ligar mic"}
+              {isListening ? "🎤 Parar mic" : "🎤 Ligar mic"}
             </Button>
             <div>
               <label className="text-[10px] text-white/40 font-mono">Sensibilidade: {threshold}%</label>
