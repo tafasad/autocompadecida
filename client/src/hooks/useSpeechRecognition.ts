@@ -102,6 +102,7 @@ export function useSpeechRecognition(
 
         if (hasNetworkErrorRef.current) {
           // Erro de rede: retry com nova instância e backoff exponencial
+          hasNetworkErrorRef.current = false;
           retryCountRef.current += 1;
           const delay = Math.min(2000 * Math.pow(2, Math.min(retryCountRef.current - 1, 5)), 30000);
           const msg = retryCountRef.current <= 1
@@ -109,16 +110,19 @@ export function useSpeechRecognition(
             : `Rede instável. Tentando novamente em ${Math.round(delay / 1000)}s... (${retryCountRef.current})`;
           setError(msg);
           onStatusChangeRef.current?.("error");
-          hasNetworkErrorRef.current = false;
 
           retryTimeoutRef.current = window.setTimeout(() => {
-            if (isStoppingRef.current) return;
+            if (isStoppingRef.current || !isListeningRef.current) return;
             const newRecog = createRecognition();
             if (newRecog) {
               recognitionRef.current = newRecog;
+              isListeningRef.current = true;
               try { newRecog.start(); } catch (e: any) {
                 console.warn("Falha ao iniciar nova instância:", e?.message);
+                // Se falhar, marca erro de rede pra tentar de novo no próximo onend
                 hasNetworkErrorRef.current = true;
+                isListeningRef.current = false;
+                setIsListening(false);
               }
             }
           }, delay);
@@ -202,11 +206,16 @@ export function useSpeechRecognition(
       }
 
       if (event.error === "network") {
+        const offline = !navigator.onLine;
+        console.log(`[NETWORK ERROR] navigator.onLine=${offline ? 'OFFLINE' : 'ONLINE'}`);
         // Marca que houve erro de rede — onend fará o retry com nova instância
         hasNetworkErrorRef.current = true;
         try { recognition.abort(); } catch { /* ignorar */ }
         // isListeningRef continua true para que onend tente reconectar
         onStatusChangeRef.current?.("error");
+        if (offline) {
+          setError("Sem internet! Conecte-se a uma rede e tente novamente.");
+        }
         return;
       }
 
@@ -271,16 +280,14 @@ export function useSpeechRecognition(
   }, []);
 
   const start = useCallback(async () => {
-    if (!recognitionRef.current) {
-      // Tenta recriar se não existir
-      const newRecog = createRecognition();
-      if (!newRecog) {
-        setError("Reconhecimento de voz não suportado");
-        onStatusChangeRef.current?.("error");
-        return;
-      }
-      recognitionRef.current = newRecog;
+    // Sempre cria uma instância fresca ao startar — evita estado corrompido
+    const newRecog = createRecognition();
+    if (!newRecog) {
+      setError("Reconhecimento de voz não suportado");
+      onStatusChangeRef.current?.("error");
+      return;
     }
+    recognitionRef.current = newRecog;
 
     // Prevent double-start which causes "aborted" error
     if (isStartingRef.current) {
@@ -304,7 +311,7 @@ export function useSpeechRecognition(
       onStatusChangeRef.current?.("listening");
 
       try {
-        recognitionRef.current.start();
+        newRecog.start();
       } catch (err: any) {
         if (
           err.message?.includes("already started") ||
