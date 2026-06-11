@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { Shield } from "lucide-react";
 
 type Mode = "login" | "register";
 
@@ -83,6 +84,13 @@ export function LoginPage() {
     setRecentUsers(getRecentUsers());
   };
 
+  const quickAdminLogin = () => {
+    setUsername("admin000");
+    setPassword("000");
+    setError("");
+    setTimeout(() => passwordRef.current?.focus(), 100);
+  };
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#070707] px-4">
       <div className="w-full max-w-sm rounded-3xl border border-zinc-800 bg-zinc-950 p-8 shadow-2xl">
@@ -98,6 +106,15 @@ export function LoginPage() {
             {error}
           </p>
         )}
+
+        {/* Botão de login rápido ADMIN */}
+        <button
+          onClick={quickAdminLogin}
+          className="mb-4 w-full flex items-center justify-center gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-300 transition hover:bg-amber-500/20 hover:border-amber-500/50"
+        >
+          <Shield className="h-4 w-4" />
+          Login Admin (admin000)
+        </button>
 
         {/* Contas recentes para login rápido */}
         {mode === "login" && recentUsers.length > 0 && (
@@ -190,7 +207,7 @@ export function LoginPage() {
 
         <div className="mt-4 border-t border-zinc-800 pt-4 text-center">
           <p className="text-[10px] text-zinc-600">
-            Admin: usuário <span className="text-zinc-400">admin000</span> senha <span className="text-zinc-400">000</span>
+            Admin: <span className="text-amber-400/70">admin000</span> / <span className="text-amber-400/70">000</span>
           </p>
         </div>
       </div>

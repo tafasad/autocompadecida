@@ -451,6 +451,21 @@ function App() {
     setSelectedLineId(line.id);
   };
 
+  // Remove o áudio da fala selecionada
+  const removeSelectedLineAudio = () => {
+    if (!selectedLine) return;
+    if (selectedLine.audioId && isServerAvailable()) {
+      deleteServerAudio(selectedLine.audioId).catch(() => {});
+    }
+    updateSelectedLine({
+      audioBlob: undefined,
+      audioId: undefined,
+      audioUrl: undefined,
+      audioName: undefined,
+    });
+    setStatus("Áudio removido da fala.");
+  };
+
   // Apaga a fala selecionada (mantém no mínimo 1)
   const deleteSelectedLine = () => {
     if (!selectedLine || lines.length === 1) return;
@@ -667,6 +682,7 @@ function App() {
                 onUpdate={updateSelectedLine}
                 onPlayEffect={() => selectedLine && playEffect(selectedLine)}
                 onFileUpload={handleFileUpload}
+                onRemoveAudio={removeSelectedLineAudio}
               />
 
               {/* Botões de ação: testar, exportar, apagar, reiniciar */}
