@@ -206,8 +206,10 @@ async function startServer() {
   });
 
   const port = process.env.PORT || 3000;
-  server.listen(port, () => {
+  const host = '0.0.0.0';
+  server.listen(port, host, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    console.log(`Server also accessible on http://0.0.0.0:${port}/`);
   });
 }
 
